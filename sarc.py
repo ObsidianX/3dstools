@@ -31,12 +31,14 @@ class Sarc:
     invalid = False
     file_nodes = []
     fnt_data_length = 0
+    extracting = False
 
-    def __init__(self, filename, compressed=False, verbose=False, extract=False):
+    def __init__(self, filename, compressed=False, verbose=False, extract=False, debug=False):
         self.file = open(filename, 'rw')
         self.compressed = compressed
         self.verbose = verbose
         self.extract = extract
+        self.debug = debug
 
         if os.path.exists(filename):
             if compressed:
@@ -55,16 +57,23 @@ class Sarc:
         partial_data = ''
         eof = False
         get_more = True
+        node_section_length = 0
+        position = 0
+        partial_start = 0
+        file_idx = 0
+        remaining = 0
+        output = None
 
-        while not eof or len(partial_data) > 0:
+        while not eof or len(partial_data) > 0 or self.extracting:
             if get_more:
                 read_data = self.file.read(READ_AMOUNT)
                 eof = len(read_data) == 0
 
                 if self.compressed:
-                    partial_data += z.decompress(z.unconsumed_tail + read_data, DECOMP_AMOUNT)
-                else:
-                    partial_data += read_data
+                    read_data = z.decompress(z.unconsumed_tail + read_data, DECOMP_AMOUNT)
+
+                position += len(read_data)
+                partial_data += read_data
                 get_more = False
 
             if state == STATE_SARC_HEADER:
@@ -73,6 +82,7 @@ class Sarc:
                     if self.invalid:
                         return
                     partial_data = partial_data[SARC_HEADER_LEN:]
+                    partial_start += SARC_HEADER_LEN
                     state = STATE_SFAT_HEADER
                 else:
                     get_more = True
@@ -82,16 +92,19 @@ class Sarc:
                     if self.invalid:
                         return
                     partial_data = partial_data[SFAT_HEADER_LEN:]
+                    partial_start += SFAT_HEADER_LEN
                     state = STATE_SFAT_DATA
+                    node_section_length = SFAT_NODE_LEN * self.file_count
+                    self.fnt_data_length = self.file_data_offset - SARC_HEADER_LEN - SFAT_HEADER_LEN - SFNT_HEADER_LEN - node_section_length
                 else:
                     get_more = True
             elif state == STATE_SFAT_DATA:
-                node_section_length = SFAT_NODE_LEN * self.file_count
                 if len(partial_data) >= node_section_length:
                     self._parse_fat_nodes(partial_data[:node_section_length])
                     if self.invalid:
                         return
                     partial_data = partial_data[node_section_length:]
+                    partial_start += node_section_length
                     state = STATE_SFNT_HEADER
                 else:
                     get_more = True
@@ -101,6 +114,7 @@ class Sarc:
                     if self.invalid:
                         return
                     partial_data = partial_data[SFNT_HEADER_LEN:]
+                    partial_start += SFNT_HEADER_LEN
                     state = STATE_SFNT_DATA
                 else:
                     get_more = True
@@ -110,14 +124,64 @@ class Sarc:
                     if self.invalid:
                         return
                     partial_data = partial_data[self.fnt_data_length:]
+                    partial_start += self.fnt_data_length
                     state = STATE_FILE_DATA
+                else:
+                    get_more = True
             elif state == STATE_FILE_DATA:
                 if not self.extract:
-                    return
+                    break
+
+                self.extracting = True
+
+                if remaining == 0:
+                    remaining = self.file_nodes[file_idx]['length']
+                    filename = self.file_nodes[file_idx]['filename']
+
+                    if self.verbose:
+                        print(filename)
+
+                    dirname = os.path.dirname(filename)
+                    if len(dirname) > 0 and not os.path.exists(dirname):
+                        try:
+                            os.mkdir(dirname)
+                        except OSError:
+                            print("Couldn't create directory: %s" % dirname)
+                            return
+                    output = file(filename, 'w')
+
+                if remaining == self.file_nodes[file_idx]['length']:
+                    start = self.file_nodes[file_idx]['start'] + self.file_data_offset
+                    if position > start and partial_start <= start:
+                        data_start = start - partial_start
+                        partial_data = partial_data[data_start:]
+                        partial_start += data_start
+                    elif partial_start > start:
+                        print("Couldn't extract file data.")
+                        return
+                    else:
+                        get_more = True
+                        continue
+
+                partial_len = len(partial_data)
+                if partial_len < remaining:
+                    output.write(partial_data)
+                    remaining -= partial_len
+                    partial_data = ''
+                    partial_start = position
+                    get_more = True
+                else:
+                    output.write(partial_data[:remaining])
+                    output.close()
+                    partial_data = partial_data[remaining:]
+                    partial_start += remaining
+                    remaining = 0
+                    file_idx += 1
+                    if file_idx >= self.file_count:
+                        break
 
         if not self.extract:
-            for node in self.file_nodes:
-                print(node['filename'])
+            self._list_files()
 
     def _parse_header(self, data):
         magic, header_len, bom, file_len, data_offset, unknown = struct.unpack('=4s2H3I', data)
@@ -154,7 +218,9 @@ class Sarc:
             self.invalid = True
             return
 
-        if self.verbose:
+        self.file_data_offset = data_offset
+
+        if self.debug:
             print('SARC Magic: %s' % magic)
             print('SARC Header length: %d' % header_len)
             print('SARC Byte order: %s' % self.order)
@@ -179,10 +245,10 @@ class Sarc:
         self.file_count = node_count
         self.file_name_hash_mult = hash_multiplier
 
-        if self.verbose:
+        if self.debug:
             print('SFAT Magic: %s' % magic)
             print('SFAT Header length: %d' % header_len)
-            print('SFAT Node count: %d' % node_count)
+            print('SFAT File count: %d' % node_count)
             print('SFAT Hash multiplier: 0x%x\n' % hash_multiplier)
 
     def _parse_fat_nodes(self, data):
@@ -200,10 +266,9 @@ class Sarc:
                 'hash': hash,
                 'name_offset': name_offset,
                 'start': data_start,
-                'end': data_end
+                'end': data_end,
+                'length': (data_end - data_start)
             })
-
-            self.fnt_data_length += name_offset + 1
 
     def _parse_fnt_header(self, data):
         magic, header_length, unknown = struct.unpack('%s4s2H' % self.order, data)
@@ -218,20 +283,17 @@ class Sarc:
             self.invalid = True
             return
 
-        if self.verbose:
+        if self.debug:
             print('SFNT Magic: %s' % magic)
             print('SFNT Header length: %d' % header_length)
 
             print('\nSFNT Unknown: 0x%x\n' % unknown)
 
     def _parse_fnt_data(self, data):
-        print data.encode('hex')
         for node in self.file_nodes:
             start = node['name_offset']
             end = data.find('\0', start)
             node['filename'] = data[start:end]
-            print('Name offset: %d' % node['name_offset'])
-            print('End: %d' % end)
 
             hash = self._calc_filename_hash(node['filename'])
             if node['hash'] != hash:
@@ -240,11 +302,11 @@ class Sarc:
                 self.invalid = True
                 return
 
-            if self.verbose:
-                print('Node filename: %s' % node['filename'])
-                print('Node filename hash: 0x%x' % node['hash'])
-                print('Node data start: %d' % node['start'])
-                print('Node length: %d\n' % (node['end'] - node['start']))
+            if self.debug:
+                print('File name: %s' % node['filename'])
+                print('File name hash: 0x%x' % node['hash'])
+                print('File data start: %d' % node['start'])
+                print('File length: %d\n' % node['length'])
 
     def _calc_filename_hash(self, name):
         result = 0
@@ -253,10 +315,15 @@ class Sarc:
             result &= 0xFFFFFFFF
         return result
 
+    def _list_files(self):
+        for node in self.file_nodes:
+            print(node['filename'])
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='SARC Archive Tool')
     parser.add_argument('-v', '--verbose', help='print more data when working', action='store_true', default=False)
+    parser.add_argument('-d', '--debug', help='print debug information', action='store_true', default=False)
     parser.add_argument('-z', '--zlib', help='use ZLIB to compress or decompress the archive', action='store_true',
                         default=False)
     group = parser.add_mutually_exclusive_group(required=True)
@@ -289,7 +356,7 @@ if __name__ == '__main__':
         print(args.archive)
         sys.exit(1)
 
-    sarc = Sarc(args.archive, compressed=args.zlib, verbose=args.verbose)
+    sarc = Sarc(args.archive, compressed=args.zlib, verbose=args.verbose, debug=args.debug, extract=args.extract)
 
     if args.extract or args.list:
         sarc.read()

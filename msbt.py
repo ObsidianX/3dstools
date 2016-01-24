@@ -74,9 +74,10 @@ class Msbt:
             file_index = self.find_next_section(section_end)
 
     def find_next_section(self, start):
-        for i in range(start, self.file_size):
-            if self.file_data[i] != SECTION_END_MAGIC_SINGLE:
-                return i
+        if start >= 0:
+            for i in range(start, self.file_size):
+                if self.file_data[i] != SECTION_END_MAGIC_SINGLE:
+                    return i
 
         return self.file_size
 
