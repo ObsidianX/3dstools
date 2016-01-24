@@ -16,6 +16,12 @@ SFAT_MAGIC = 'SFAT'
 SFNT_MAGIC = 'SFNT'
 
 READ_AMOUNT = 1024
+DECOMP_AMOUNT = 512
+
+STATE_SARC = 0
+STATE_SFAT = 1
+STATE_SFNT = 2
+STATE_DATA = 3
 
 
 class Sarc:
@@ -28,7 +34,7 @@ class Sarc:
 
         if os.path.exists(filename):
             if compressed:
-                self.file_size = struct.unpack('>I', self.file.read(4))
+                self.file_size = struct.unpack('>I', self.file.read(4))[0]
             else:
                 self.file_size = os.stat(filename).st_size
 
@@ -36,9 +42,54 @@ class Sarc:
         pass
 
     def read(self):
-        z = zlib.decompressobj()
+        if self.compressed:
+            z = zlib.decompressobj()
+        state = STATE_SARC
 
-        z.decompress(self.file.read(READ_AMOUNT))
+        partial_data = ''
+        eof = False
+        get_more = True
+
+        while not eof:
+            read_data = self.file.read(READ_AMOUNT)
+            eof = len(read_data) == 0
+
+            if get_more:
+                if self.compressed:
+                    partial_data += z.decompress(z.unconsumed_tail + read_data, DECOMP_AMOUNT)
+                else:
+                    partial_data += read_data
+                get_more = False
+
+            if state == STATE_SARC:
+                if len(partial_data) >= SARC_HEADER_LEN:
+                    self._parse_header(partial_data[:SARC_HEADER_LEN])
+                    if self.invalid:
+                        return
+                    partial_data = partial_data[SARC_HEADER_LEN:]
+                    state = STATE_SFAT
+                else:
+                    get_more = True
+            elif state == STATE_SFAT:
+                if len(partial_data) >= SFAT_HEADER_LEN:
+                    self._parse_fat_header(partial_data[:SFAT_HEADER_LEN])
+                    if self.invalid:
+                        return
+                    partial_data = partial_data[SFAT_HEADER_LEN:]
+                    state = STATE_SFNT
+                else:
+                    get_more = True
+            elif state == STATE_SFNT:
+                if len(partial_data) >= SFNT_HEADER_LEN:
+                    self._parse_fnt_header(partial_data[:SFNT_HEADER_LEN])
+                    if self.invalid:
+                        return
+                    partial_data = partial_data[SFNT_HEADER_LEN:]
+                    state = STATE_DATA
+                else:
+                    get_more = True
+            elif state == STATE_DATA:
+                pass
 
     def _parse_header(self, data):
         magic, header_len, bom, file_len, data_offset, unknown = struct.unpack('=4s2H3I', data)
@@ -84,10 +135,10 @@ class Sarc:
 
             print('\nSARC Unknown: 0x%x' % unknown)
 
-    def _parse_fat_header(self):
+    def _parse_fat_header(self, data):
         pass
 
-    def _parse_fnt_header(self):
+    def _parse_fnt_header(self, data):
         pass
 
 
@@ -99,12 +150,15 @@ if __name__ == '__main__':
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('-x', '--extract', help='extract the SARC', action='store_true', default=False)
     group.add_argument('-c', '--create', help='create a SARC', action='store_true', default=False)
+    group.add_argument('-t', '--list', help='list contents', action='store_true', default=False)
     parser.add_argument('-f', '--archive', metavar='archive', help='the SARC filename', default=None, required=True)
     parser.add_argument('file', help='files to add to an archive', nargs='*')
     args = parser.parse_args()
 
-    if os.path.exists(args.file) and args.create:
-        print('File exists: %s' % args.file)
+    archive_exists = os.path.exists(args.archive)
+
+    if archive_exists and args.create:
+        print('File exists: %s' % args.archive)
         answer = None
         while answer not in ('y', 'n'):
             if answer is not None:
@@ -118,7 +172,12 @@ if __name__ == '__main__':
             print('Aborted.')
             sys.exit(1)
 
-    if not os.path.exists(args.file) and args.extract:
+    if not archive_exists and (args.extract or args.list):
         print('File not found!')
-        print(args.file)
+        print(args.archive)
         sys.exit(1)
+
+    sarc = Sarc(args.archive, compressed=args.zlib, verbose=args.verbose)
+
+    if args.extract or args.list:
+        sarc.read()
