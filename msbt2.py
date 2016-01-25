@@ -3,6 +3,7 @@ import argparse
 import os.path
 import struct
 import sys
+import json
 
 MSBT_HEADER_LEN = 0x20
 NLI1_HEADER_LEN = 0x14
@@ -33,7 +34,6 @@ class Msbt:
 
     def read(self):
         data = open(self.filename, 'r').read()
-        position = 0
 
         self._parse_header(data[:MSBT_HEADER_LEN])
         if self.invalid:
@@ -66,7 +66,7 @@ class Msbt:
                 position += TXT2_HEADER_LEN
                 if self.invalid:
                     return
-                self._parse_txt2_data(data[:self.sections['TXT2']['size']])
+                self._parse_txt2_data(data[position:position + self.sections['TXT2']['size']])
                 position += self.sections['TXT2']['size']
 
             # TODO:
@@ -83,7 +83,21 @@ class Msbt:
         pass
 
     def to_json(self, filename):
-        pass
+        output = {
+            'strings': {},
+            'structure': {}
+        }
+
+        label_lists = self.sections['LBL1']['data']
+        for label_list in label_lists:
+            for label in label_lists:
+                id = label[0]
+                name = label[1]
+                value = self.sections['TXT2']['data'][id]
+                output['strings'][name] = value
+
+        file = open(filename, 'w')
+        file.write(json.dumps(output, indent=2))
 
     def from_json(self, filename):
         pass
@@ -101,7 +115,7 @@ class Msbt:
         elif bom == 0xFEFF:
             self.order = '<'
 
-        if self.order == None:
+        if self.order is None:
             print('Invalid byte-order marker: 0x%x (expected either 0xFFFE or 0xFEFF)' % bom)
             self.invalid = True
             return
@@ -152,10 +166,46 @@ class Msbt:
             print('\nLBL1 Unknown: 0x%s\n' % unknown.encode('hex'))
 
     def _parse_lbl1_data(self, data):
-        # parse list groups
-        # [4][4] = count, offset
-        # extract list groups
-        pass
+        entries = self.sections['LBL1']['entries']
+        position = 0
+
+        lists = []
+
+        if self.debug:
+            print('\nLBL1 Entries:')
+
+        entry = 1
+        while entries > 0:
+            count, offset = struct.unpack('%s2I' % self.order, data[position:position + 8])
+            if self.debug:
+                print('\n#%d' % entry)
+                entry += 1
+                print('List length: %d' % count)
+                print('First offset: 0x%x' % offset)
+
+            position += 8
+            entries -= 1
+            offset -= 4
+
+            list_ = []
+
+            for i in range(count):
+                length = ord(data[offset])
+                name_end = offset + length + 1
+                name = data[offset + 1:name_end]
+                id_offset = name_end
+                id = struct.unpack('%sI' % self.order, data[id_offset:id_offset + 4])[0]
+                list_.append((id, name))
+
+                if self.debug:
+                    print('  %d: %s' % (id, name))
+
+            lists.append((list_, offset))
+
+        if self.debug:
+            print('')
+
+        self.sections['LBL1']['data'] = lists
 
     def _parse_atr1_header(self, data):
         magic, size, unknown1, unknown2, entries = struct.unpack('%s4s4I' % self.order, data)
@@ -206,7 +256,36 @@ class Msbt:
             print('TXT2 Unknown2: 0x%x\n' % unknown2)
 
     def _parse_txt2_data(self, data):
-        pass
+        entries = self.sections['TXT2']['entries']
+        data_len = len(data)
+
+        strings = []
+
+        position = 0
+        index = 0
+        while entries > 0:
+            print('index %d' % index)
+            string_start = struct.unpack('I', data[position:position + 4])[0]
+            position += 4
+            entries -= 1
+
+            # -4 since we included entries in the header
+            string_start -= 4
+            string_end = string_start
+
+            while string_end < data_len:
+                string_end += 2
+                if data[string_end:string_end + 2] == '\x00\x00':
+                    break
+
+            string = data[string_start:string_end].decode('utf-16').encode('utf-8')
+            strings.append(string)
+
+            if self.debug:
+                print('%d: %s' % (index, string))
+                index += 1
+
+        self.sections['TXT2']['data'] = strings
 
 
 def prompt_yes_no(prompt):
