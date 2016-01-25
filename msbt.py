@@ -20,8 +20,7 @@ LBL1_HEADER_STRUCT = '%s4sI8sI'
 ATR1_HEADER_STRUCT = '%s4s4I'
 TXT2_HEADER_STRUCT = '%s4s4I'
 
-SECTION_END_MAGIC = '\xAB\xAB\xAB\xAB'
-SECTION_END_MAGIC_SINGLE = '\xAB'
+SECTION_END_MAGIC = '\xAB'
 
 
 class Msbt:
@@ -115,11 +114,10 @@ class Msbt:
                 'TXT2': self._serialize_txt2
             }[section]()
             output.write(data)
-            output.write(SECTION_END_MAGIC)
 
             position = output.tell()
-            # write the section end bytes until the next 16b alignment
-            output.write(SECTION_END_MAGIC_SINGLE * (16 - (position % 16)))
+            # write the section end bytes until the next 0x10 alignment
+            output.write(SECTION_END_MAGIC * (16 - (position % 16)))
 
         # update the size in the header with the final size
         size = output.tell()
