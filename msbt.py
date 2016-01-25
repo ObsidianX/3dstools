@@ -371,7 +371,6 @@ class Msbt:
         position = 0
         index = 0
         while entries > 0:
-            print('index %d' % index)
             string_start = struct.unpack('I', data[position:position + 4])[0]
             position += 4
             entries -= 1
@@ -527,6 +526,11 @@ if __name__ == '__main__':
         if answer == 'n':
             print('Aborted.')
             sys.exit(1)
+
+    json_dirname = os.path.dirname(args.json)
+    if not os.path.exists(json_dirname):
+        print('Folder not found: %s' % json_dirname)
+        sys.exit(1)
 
     if args.pack and not os.path.exists(args.json):
         print('JSON file not found!')
