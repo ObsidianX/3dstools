@@ -526,7 +526,7 @@ if __name__ == '__main__':
             sys.exit(1)
 
     json_dirname = os.path.dirname(args.json)
-    if not os.path.exists(json_dirname):
+    if len(json_dirname) > 0 and not os.path.exists(json_dirname):
         print('Folder not found: %s' % json_dirname)
         sys.exit(1)
 
