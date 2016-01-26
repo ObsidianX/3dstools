@@ -117,7 +117,9 @@ class Msbt:
 
             position = output.tell()
             # write the section end bytes until the next 0x10 alignment
-            output.write(SECTION_END_MAGIC * (16 - (position % 16)))
+            padding = (16 - (position % 16))
+            if padding < 16:
+                output.write(SECTION_END_MAGIC * padding)
 
         # update the size in the header with the final size
         size = output.tell()
@@ -364,26 +366,37 @@ class Msbt:
         entries = self.sections['TXT2']['header']['entries']
         data_len = len(data)
 
+        offsets = []
         strings = []
 
-        position = 0
+        for i in range(entries):
+            start = i * 4
+            end = (i + 1) * 4
+            offsets.append(struct.unpack('%sI' % self.order, data[start:end])[0] - 4)
+
         index = 0
-        while entries > 0:
-            string_start = struct.unpack('%sI' % self.order, data[position:position + 4])[0]
-            position += 4
-            entries -= 1
+        for i in range(entries):
+            start = offsets[i]
+            if i < entries - 1:
+                end = offsets[i + 1]
+            else:
+                end = data_len
 
-            # -4 since we included entries in the header
-            string_start -= 4
-            string_end = string_start
+            string_data = data[start:end]
 
-            while string_end < data_len:
-                if data[string_end:string_end + 2] == '\x00\x00':
-                    break
-                string_end += 2
+            position = 0
+            string = ''
+            substrings = []
+            while position < len(string_data):
+                utf16char = string_data[position:position + 2]
+                if utf16char != '\x00\x00':
+                    string += utf16char
+                else:
+                    substrings.append(string.decode('utf-16','ignore'))
+                    string = ''
+                position += 2
 
-            string = data[string_start:string_end].decode('utf-16').encode('utf-8')
-            strings.append(string)
+            strings.append(substrings)
 
             if self.debug:
                 print('%d: %s' % (index, string))
@@ -464,11 +477,12 @@ class Msbt:
         elif self.order == '>':
             order = '-be'
 
-        for string in strings:
-            utf16string = string.encode('utf-16%s' % order)
+        for string_list in strings:
             section1_bytes += struct.pack('%sI' % self.order, section1_length + len(section2_bytes) + 4)
-            section2_bytes += struct.pack('=%ds' % len(utf16string), utf16string)
-            section2_bytes += '\x00\x00'
+            for string in string_list:
+                utf16string = string.encode('utf-16%s' % order)
+                section2_bytes += struct.pack('=%ds' % len(utf16string), utf16string)
+                section2_bytes += '\x00\x00'
 
         size = len(header_bytes) + len(section1_bytes) + len(section2_bytes) + 4
         header_bytes = header_bytes[:4] + struct.pack('%sI' % self.order, size) + header_bytes[8:]
