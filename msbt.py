@@ -2,6 +2,7 @@
 import argparse
 import json
 import os.path
+import re
 import struct
 import sys
 
@@ -21,6 +22,7 @@ ATR1_HEADER_STRUCT = '%s4s4I'
 TXT2_HEADER_STRUCT = '%s4s4I'
 
 SECTION_END_MAGIC = '\xAB'
+COLOR_ESCAPE = '\x03\x00\x04\x00'
 
 
 class Msbt:
@@ -29,9 +31,10 @@ class Msbt:
     sections = {}
     section_order = []
 
-    def __init__(self, verbose=False, debug=False):
+    def __init__(self, verbose=False, debug=False, colors=False):
         self.verbose = verbose
         self.debug = debug
+        self.colors = colors
 
     def read(self, filename):
         self.filename = filename
@@ -388,11 +391,18 @@ class Msbt:
             string = ''
             substrings = []
             while position < len(string_data):
+                if self.colors and len(string) >= 4 and string[-4:] == COLOR_ESCAPE:
+                    # save color information
+                    color = struct.unpack('%sI' % self.order, string_data[position:position + 4])[0]
+                    position += 4
+                    string += ('[#%08x]' % color).encode('utf-16-%s' % ('-le' if self.order == '<' else '-be'))
+                    continue
+
                 utf16char = string_data[position:position + 2]
                 if utf16char != '\x00\x00':
                     string += utf16char
                 else:
-                    substrings.append(string.decode('utf-16','ignore'))
+                    substrings.append(string.decode('utf-16', 'replace'))
                     string = ''
                 position += 2
 
@@ -481,10 +491,30 @@ class Msbt:
             section1_bytes += struct.pack('%sI' % self.order, section1_length + len(section2_bytes) + 4)
             for string in string_list:
                 utf16string = string.encode('utf-16%s' % order)
+
+                if self.colors:
+                    haystack = string
+                    matcher = ''
+                    utf16string = ''
+
+                    while matcher is not None:
+                        matcher = re.search('(?P<pre>.*)\\[#(?P<color>[a-fA-F0-9]{8})\\](?P<post>.*)', haystack, re.DOTALL)
+
+                        if matcher is not None:
+                            pre = matcher.group('pre')
+                            color = matcher.group('color')
+                            colorValue = int(color, 16)
+                            post = matcher.group('post')
+                            utf16string += pre.encode('utf-16%s' % order)
+                            utf16string += struct.pack('%sI' % self.order, colorValue)
+                            haystack = post
+                        else:
+                            utf16string += haystack.encode('utf-16%s' % order)
+
                 section2_bytes += struct.pack('=%ds' % len(utf16string), utf16string)
                 section2_bytes += '\x00\x00'
 
-        size = len(header_bytes) + len(section1_bytes) + len(section2_bytes) + 4
+        size = len(section1_bytes) + len(section2_bytes) + 4
         header_bytes = header_bytes[:4] + struct.pack('%sI' % self.order, size) + header_bytes[8:]
 
         if self.debug:
@@ -515,6 +545,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='MsgStdBn Parser')
     parser.add_argument('-v', '--verbose', help='print more data when working', action='store_true', default=False)
     parser.add_argument('-d', '--debug', help='print debug information', action='store_true', default=False)
+    parser.add_argument('-c', '--colors', help='decode colors in strings', action='store_true', default=False)
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('-x', '--extract', help='extract MSBT to plain text', action='store_true', default=False)
     group.add_argument('-p', '--pack', help='pack plain text into an MSBT file', action='store_true', default=False)
@@ -556,7 +587,7 @@ if __name__ == '__main__':
             print('Aborted.')
             sys.exit(1)
 
-    msbt = Msbt(verbose=args.verbose, debug=args.debug)
+    msbt = Msbt(verbose=args.verbose, debug=args.debug, colors=args.colors)
 
     if args.pack:
         msbt.from_json(args.json)

@@ -74,7 +74,18 @@ class Sarc:
         else:
             self.files.append(path)
 
-        self.files.sort()
+        self.files.sort(self._file_sort)
+
+    def _file_sort(self, x, y):
+        hash_x = self._calc_filename_hash(x)
+        hash_y = self._calc_filename_hash(y)
+
+        if hash_x < hash_y:
+            return -1
+        elif hash_x > hash_y:
+            return 1
+
+        return 0
 
     def _add_path(self, arg, dirname, files):
         for file_ in files:
@@ -128,8 +139,8 @@ class Sarc:
             filename = self.files[i]
 
             position = self.file.tell()
-            padding = 0x100 - (position % 0x100)
-            if padding < 0x100:
+            padding = 0x80 - (position % 0x80)
+            if padding < 0x80:
                 self.file.write('\0' * padding)
                 position += padding
 
