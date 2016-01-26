@@ -369,7 +369,7 @@ class Msbt:
         position = 0
         index = 0
         while entries > 0:
-            string_start = struct.unpack('I', data[position:position + 4])[0]
+            string_start = struct.unpack('%sI' % self.order, data[position:position + 4])[0]
             position += 4
             entries -= 1
 
@@ -378,9 +378,9 @@ class Msbt:
             string_end = string_start
 
             while string_end < data_len:
-                string_end += 2
                 if data[string_end:string_end + 2] == '\x00\x00':
                     break
+                string_end += 2
 
             string = data[string_start:string_end].decode('utf-16').encode('utf-8')
             strings.append(string)
@@ -466,8 +466,7 @@ class Msbt:
 
         for string in strings:
             utf16string = string.encode('utf-16%s' % order)
-            idx = 0
-            section1_bytes += struct.pack('%sI' % self.order, len(section2_bytes))
+            section1_bytes += struct.pack('%sI' % self.order, section1_length + len(section2_bytes) + 4)
             section2_bytes += struct.pack('=%ds' % len(utf16string), utf16string)
             section2_bytes += '\x00\x00'
 

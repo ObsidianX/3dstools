@@ -46,8 +46,8 @@ class Sarc:
     files = []
 
     def __init__(self, filename, compressed=False, verbose=False, extract=False, debug=False, little_endian=True,
-                 compression_level=DEFAULT_COMPRESSION_LEVEL):
-        self.file = open(filename, 'rb' if extract else 'wb')
+                 list=False, compression_level=DEFAULT_COMPRESSION_LEVEL):
+        self.file = open(filename, 'rb' if (extract or list) else 'wb')
         self.filename = filename
         self.compressed = compressed
         self.verbose = verbose
@@ -55,14 +55,14 @@ class Sarc:
         self.debug = debug
         self.compression_level = compression_level
 
-        if not extract:
+        if not extract and not list:
             if little_endian:
                 self.order = '<'
             else:
                 self.order = '>'
             self.file_name_hash_mult = SFAT_HASH_MULTIPLIER
 
-        if os.path.exists(filename) and extract:
+        if os.path.exists(filename) and (extract or list):
             if compressed:
                 self.file_size = struct.unpack('>I', self.file.read(4))[0]
             else:
@@ -496,7 +496,7 @@ if __name__ == '__main__':
         sys.exit(1)
 
     sarc = Sarc(args.archive, compressed=args.zlib, verbose=args.verbose, debug=args.debug, extract=args.extract,
-                little_endian=args.little_endian, compression_level=args.compression_level)
+                list=args.list, little_endian=args.little_endian, compression_level=args.compression_level)
 
     if args.extract or args.list:
         sarc.read()
