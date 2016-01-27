@@ -10,7 +10,7 @@ Converts between MSBT and JSON files for translation or string modification.
 ### Usage
 
 ```
-usage: msbt.py [-h] [-v] [-d] (-x | -p) [-y] -j JSON msbt_file
+usage: msbt.py [-h] [-v] [-d] [-c] (-x | -p) [-y] -j JSON msbt_file
 
 MsgStdBn Parser
 
@@ -21,6 +21,7 @@ optional arguments:
   -h, --help            show this help message and exit
   -v, --verbose         print more data when working
   -d, --debug           print debug information
+  -c, --colors          decode colors in strings
   -x, --extract         extract MSBT to plain text
   -p, --pack            pack plain text into an MSBT file
   -y, --yes             answer "Yes" to any questions (overwriting files)
@@ -39,6 +40,33 @@ Convert from JSON back to MSBT:
 
 ```
 msbt.py -p -j Sample.json Sample.msbt
+```
+
+If strings contain color codes (which are invalid UTF-16 bytes) then use the `--colors` flag to parse them:
+
+```
+msbt.py -x -c -j Sample.json Sample.msbt
+```
+
+Make sure you mirror the `--colors` flag when repacking:
+
+```
+msbt.py -p -c -j Sample.json Sample.msbt
+```
+
+
+### Colors
+
+In at least one game, colors are prefixed with two bytes, `\u0003\u0004` followed by a 32-bit color code.  The `--colors` flag will ensure that the 4 bytes following the color prefix are not parsed as UTF-16.  The resulting output string will look like:
+
+```json
+"\u0003\u0004[#ff112233]Color"
+```
+
+When packing the MSBT with the `--colors` flag, the parser will look for those color markers and write them as 4-byte integers just as they were read out originally.  For example (little endian):
+
+```
+30 00 40 00 33 22 11 ff 43 6f 6c 6f 72
 ```
 
 ## sarc.py
@@ -93,11 +121,11 @@ sarc.py -czf Sample.zlib file1.txt file2.txt subdir/
 List contents of a compressed SARC:
 
 ```
-sarc.py -tzf Sample.sarc
+sarc.py -tzf Sample.zlib
 ```
 ```
-file1.txt
-file2.txt
 subdir/file3.txt
 subdir/file4.txt
+file1.txt
+file2.txt
 ```
