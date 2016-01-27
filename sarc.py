@@ -44,6 +44,7 @@ class Sarc:
     fnt_data_length = 0
     extracting = False
     files = []
+    file_position = 0
 
     def __init__(self, filename, compressed=False, verbose=False, extract=False, debug=False, little_endian=True,
                  list=False, compression_level=DEFAULT_COMPRESSION_LEVEL):
@@ -91,6 +92,11 @@ class Sarc:
         for file_ in files:
             self.files.append(os.path.join(dirname, file_))
 
+    def _write(self, data, count=True):
+        self.file.write(data)
+        if count:
+            self.file_position += len(data)
+
     def save(self):
         bom = 0
         if self.order == '<':
@@ -100,7 +106,8 @@ class Sarc:
 
         header = struct.pack(SARC_HEADER_STRUCT, SARC_MAGIC, SARC_HEADER_LEN, bom, 0, 0, SARC_HEADER_UNKNOWN)
 
-        self.file.write(header)
+        self.file_position = 0
+        self._write(header)
 
         fat_bytes = ''
         fnt_bytes = ''
@@ -120,28 +127,30 @@ class Sarc:
                                  SFAT_HASH_MULTIPLIER)
         fnt_header = struct.pack(SFNT_HEADER_STRUCT % self.order, SFNT_MAGIC, SFNT_HEADER_LEN, 0)
 
-        self.file.write(fat_header)
-        fat_header_start = self.file.tell()
-        self.file.write(fat_bytes)
+        self._write(fat_header)
+        fat_header_start = self.file_position
+        self._write(fat_bytes)
 
-        self.file.write(fnt_header)
-        self.file.write(fnt_bytes)
+        self._write(fnt_header)
+        self._write(fnt_bytes)
 
-        data_start = self.file.tell()
-        padding = 256 - (data_start % 256)
-        data_start += padding
+        data_start = self.file_position
+        padding = 0x100 - (data_start % 0x100)
+        if padding < 0x100:
+            data_start += padding
+            self._write('\x00' * padding)
 
         self.file.seek(0x0c)
-        self.file.write(struct.pack('%sI' % self.order, data_start))
+        self._write(struct.pack('%sI' % self.order, data_start), False)
         self.file.seek(data_start)
 
         for i in range(len(self.files)):
             filename = self.files[i]
 
-            position = self.file.tell()
+            position = self.file_position
             padding = 0x80 - (position % 0x80)
             if padding < 0x80:
-                self.file.write('\0' * padding)
+                self._write('\0' * padding)
                 position += padding
 
             if self.verbose:
@@ -151,18 +160,18 @@ class Sarc:
             file_start = position - data_start
             file_end = file_start + os.stat(filename).st_size
             self.file.seek(fat_header_start + (SFAT_NODE_LEN * i) + 0x08)
-            self.file.write(struct.pack('%s2I' % self.order, file_start, file_end))
+            self._write(struct.pack('%s2I' % self.order, file_start, file_end), False)
             self.file.seek(position)
 
             file = open(filename, 'r')
             data = file.read(FILE_READ_SIZE)
             while len(data) > 0:
-                self.file.write(data)
+                self._write(data)
                 data = file.read(FILE_READ_SIZE)
 
-        size = self.file.tell()
+        size = self.file_position
         self.file.seek(0x08)
-        self.file.write(struct.pack('%sI' % self.order, size))
+        self._write(struct.pack('%sI' % self.order, size), False)
 
         self.file.close()
 
@@ -517,4 +526,4 @@ if __name__ == '__main__':
     elif args.create:
         for path in args.file:
             sarc.add(path)
-            sarc.save()
+        sarc.save()
