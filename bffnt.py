@@ -6,6 +6,18 @@ import struct
 
 import png
 
+
+
+
+
+
+
+
+
+
+
+
+
 # FINF = Font Info
 # TGLP = Texture Glyph
 # CWDH = Character Widths
@@ -65,6 +77,9 @@ TILE_ORDER = [
 class Bffnt:
     order = None
     invalid = False
+    tglp = {}
+    cwdh_sections = []
+    cmap_sections = []
 
     def __init__(self, verbose=False, debug=False):
         self.verbose = verbose
@@ -86,15 +101,45 @@ class Bffnt:
         # navigate to TGLP (offset skips the MAGIC+size)
         position = self.tglp_offset - 8
         self._parse_tglp_header(data[position:position + TGLP_HEADER_SIZE])
+        if self.invalid:
+            return
 
-        sheets = []
         position = self.tglp['sheetOffset']
-        for i in range(self.tglp['sheetCount']):
-            sheets.append(data[position:position + self.tglp['sheet']['size']])
-            position += self.tglp['sheet']['size']
+        self._parse_tglp_data(data[position:position + self.tglp['size']])
 
-        self._gen_bitmap(sheets[0], self.tglp['sheet']['width'], self.tglp['sheet']['height'],
-                         self.tglp['sheet']['format'])
+        # navigate to CWDH (offset skips the MAGIC+size)
+        cwdh = self.cwdh_offset
+        while cwdh > 0:
+            position = cwdh - 8
+            cwdh = self._parse_cwdh_header(data[position:position + CWDH_HEADER_SIZE])
+            if self.invalid:
+                return
+
+            position += CWDH_HEADER_SIZE
+            info = self.cwdh_sections[-1]
+            self._parse_cwdh_data(info, data[position:position + info['size']])
+
+        # navigate to CMAP (offset skips the MAGIC+size)
+        cmap = self.cmap_offset
+        while cmap > 0:
+            position = cmap - 8
+            cmap = self._parse_cmap_header(data[position:position + CMAP_HEADER_SIZE])
+            if self.invalid:
+                return
+
+            position += CMAP_HEADER_SIZE
+            info = self.cmap_sections[-1]
+            self._parse_cmap_data(info, data[position:position + info['size']])
+
+        pass
+        # sheets = []
+        # position = self.tglp['sheetOffset']
+        # for i in range(self.tglp['sheetCount']):
+        #    sheets.append(data[position:position + self.tglp['sheet']['size']])
+        #    position += self.tglp['sheet']['size']
+        #
+        # self._gen_bitmap(sheets[0], self.tglp['sheet']['width'], self.tglp['sheet']['height'],
+        #                 self.tglp['sheet']['format'])
 
     def _parse_header(self, data):
         magic, bom, header_size, version, file_size, sections = struct.unpack(FFNT_HEADER_STRUCT, data)
@@ -228,30 +273,64 @@ class Bffnt:
         print('TGLP Sheet Columns: %d' % num_sheet_cols)
         print('TGLP Sheet Width: %d' % sheet_width)
         print('TGLP Sheet Height: %d' % sheet_height)
-        print('TGLP Sheet Data Offset: 0x%08x' % sheet_data_offset)
+        print('TGLP Sheet Data Offset: 0x%08x\n' % sheet_data_offset)
+
+    def _parse_tglp_data(self, data):
+        pass
 
     def _parse_cwdh_header(self, data):
         magic, section_size, start_index, end_index, next_cwdh_offset \
             = struct.unpack(CWDH_HEADER_STRUCT % self.order, data)
 
+        if magic != CWDH_HEADER_MAGIC:
+            print('Invalid CWDH magic bytes: %s (expected %s)' % (magic, CWDH_HEADER_MAGIC))
+            self.invalid = True
+            return
+
+        self.cwdh_sections.append({
+            'size': section_size,
+            'start': start_index,
+            'end': end_index
+        })
+
         print('CWDH Magic: %s' % magic)
         print('CWDH Section Size: %d' % section_size)
         print('CWDH Start Index: %d' % start_index)
         print('CWDH End Index: %d' % end_index)
-        print('CWDH Next CWDH Offset: 0x%x' % next_cwdh_offset)
+        print('CWDH Next CWDH Offset: 0x%x\n' % next_cwdh_offset)
+
+        return next_cwdh_offset
+
+    def _parse_cwdh_data(self, info, data):
+        pass
 
     def _parse_cmap_header(self, data):
         magic, section_size, code_begin, code_end, map_method, unknown, next_cmap_offset \
             = struct.unpack(CMAP_HEADER_STRUCT % self.order, data)
 
+        if magic != CMAP_HEADER_MAGIC:
+            print('Invalid CMAP magic bytes: %s (expected %s)' % (magic, CMAP_HEADER_MAGIC))
+
+        self.cmap_sections.append({
+            'size': section_size,
+            'begin': code_begin,
+            'end': code_end,
+            'type': map_method
+        })
+
         print('CMAP Magic: %s' % magic)
         print('CMAP Section Size: %d' % section_size)
-        print('CMAP Code Begin: %d' % code_begin)
-        print('CMAP Code End: %d' % code_end)
+        print('CMAP Code Begin: 0x%x' % code_begin)
+        print('CMAP Code End: 0x%x' % code_end)
         print('CMAP Mapping Method: 0x%x (%s)' % (map_method, MAPPING_METHODS[map_method]))
         print('CMAP Next CMAP Offset: 0x%x' % next_cmap_offset)
 
         print('\nCMAP Unknown: 0x%x\n' % unknown)
+
+        return next_cmap_offset
+
+    def _parse_cmap_data(self, info, data):
+        pass
 
     def _gen_bitmap(self, data, width, height, pixel_format):
         req_width = width
