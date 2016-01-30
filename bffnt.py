@@ -18,6 +18,17 @@ import png
 
 
 
+
+
+
+
+
+
+
+
+
+
+
 # FINF = Font Info
 # TGLP = Texture Glyph
 # CWDH = Character Widths
@@ -302,7 +313,17 @@ class Bffnt:
         return next_cwdh_offset
 
     def _parse_cwdh_data(self, info, data):
-        pass
+        count = info['end'] - info['start'] + 1
+        data = []
+        position = 0
+        for i in range(count):
+            left, glyph, char = struct.unpack('%sh2H' % self.order, data[position:position + 3])
+            position += 3
+            data.append({
+                'left': left,
+                'glyph': glyph,
+                'char': char
+            })
 
     def _parse_cmap_header(self, data):
         magic, section_size, code_begin, code_end, map_method, unknown, next_cmap_offset \
@@ -330,7 +351,30 @@ class Bffnt:
         return next_cmap_offset
 
     def _parse_cmap_data(self, info, data):
-        pass
+        type = info['type']
+        # direct
+        if type == 0:
+            info['indexOffset'] = struct.unpack('%sH' % self.order, data[2])
+        # table
+        elif type == 1:
+            count = info['end'] - info['start'] + 1
+            position = 0
+            data = []
+            for i in range(count):
+                offset = struct.unpack('%sH' % self.order, data[position:position + 2])
+                position += 2
+                data.append(offset)
+            info['indexTable'] = data
+        # scan
+        elif type == 2:
+            position = 0
+            count = struct.unpack('%sH' % self.order, data[position:position + 2])
+            position += 2
+            data = {}
+            for i in range(count):
+                code, offset = struct.unpack('%s2H' % self.order, data[position:position + 2])
+                data[code] = offset
+            info['entries'] = data
 
     def _gen_bitmap(self, data, width, height, pixel_format):
         req_width = width
