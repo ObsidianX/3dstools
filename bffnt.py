@@ -6,29 +6,6 @@ import struct
 
 import png
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # FINF = Font Info
 # TGLP = Texture Glyph
 # CWDH = Character Widths
@@ -77,13 +54,6 @@ MAPPING_METHODS = {
     0x02: 'Scan'
 }
 
-TILE_ORDER = [
-    0, 1, 4, 5,
-    2, 3, 6, 7,
-    8, 9, 12, 13,
-    10, 11, 14, 15
-]
-
 
 class Bffnt:
     order = None
@@ -128,7 +98,7 @@ class Bffnt:
 
             position += CWDH_HEADER_SIZE
             info = self.cwdh_sections[-1]
-            self._parse_cwdh_data(info, data[position:position + info['size']])
+            self._parse_cwdh_data(info, data[position:position + info['size'] - CWDH_HEADER_SIZE])
 
         # navigate to CMAP (offset skips the MAGIC+size)
         cmap = self.cmap_offset
@@ -140,17 +110,16 @@ class Bffnt:
 
             position += CMAP_HEADER_SIZE
             info = self.cmap_sections[-1]
-            self._parse_cmap_data(info, data[position:position + info['size']])
+            self._parse_cmap_data(info, data[position:position + info['size'] - CMAP_HEADER_SIZE])
 
-        pass
-        # sheets = []
-        # position = self.tglp['sheetOffset']
-        # for i in range(self.tglp['sheetCount']):
-        #    sheets.append(data[position:position + self.tglp['sheet']['size']])
-        #    position += self.tglp['sheet']['size']
-        #
-        # self._gen_bitmap(sheets[0], self.tglp['sheet']['width'], self.tglp['sheet']['height'],
-        #                 self.tglp['sheet']['format'])
+        sheets = []
+        position = self.tglp['sheetOffset']
+        for i in range(self.tglp['sheetCount']):
+            sheets.append(data[position:position + self.tglp['sheet']['size']])
+            position += self.tglp['sheet']['size']
+
+        self._gen_bitmap(sheets[0], self.tglp['sheet']['width'], self.tglp['sheet']['height'],
+                         self.tglp['sheet']['format'])
 
     def _parse_header(self, data):
         magic, bom, header_size, version, file_size, sections = struct.unpack(FFNT_HEADER_STRUCT, data)
@@ -287,6 +256,12 @@ class Bffnt:
         print('TGLP Sheet Data Offset: 0x%08x\n' % sheet_data_offset)
 
     def _parse_tglp_data(self, data):
+        position = self.tglp['sheetOffset']
+        for i in range(self.tglp['sheetCount']):
+            sheet = data[position:position + self.tglp['sheet']['size']]
+            bitmap = self._sheet_to_bitmap(sheet)
+
+    def _sheet_to_bitmap(self, data):
         pass
 
     def _parse_cwdh_header(self, data):
@@ -314,12 +289,12 @@ class Bffnt:
 
     def _parse_cwdh_data(self, info, data):
         count = info['end'] - info['start'] + 1
-        data = []
+        output = []
         position = 0
         for i in range(count):
-            left, glyph, char = struct.unpack('%sh2H' % self.order, data[position:position + 3])
+            left, glyph, char = struct.unpack('%sb2B' % self.order, data[position:position + 3])
             position += 3
-            data.append({
+            output.append({
                 'left': left,
                 'glyph': glyph,
                 'char': char
@@ -357,71 +332,86 @@ class Bffnt:
             info['indexOffset'] = struct.unpack('%sH' % self.order, data[2])
         # table
         elif type == 1:
-            count = info['end'] - info['start'] + 1
+            count = info['end'] - info['begin'] + 1
             position = 0
-            data = []
+            output = []
             for i in range(count):
                 offset = struct.unpack('%sH' % self.order, data[position:position + 2])
                 position += 2
-                data.append(offset)
-            info['indexTable'] = data
+                output.append(offset)
+            info['indexTable'] = output
         # scan
         elif type == 2:
             position = 0
-            count = struct.unpack('%sH' % self.order, data[position:position + 2])
+            count = struct.unpack('%sH' % self.order, data[position:position + 2])[0]
             position += 2
-            data = {}
+            output = {}
             for i in range(count):
-                code, offset = struct.unpack('%s2H' % self.order, data[position:position + 2])
-                data[code] = offset
-            info['entries'] = data
+                code, offset = struct.unpack('%s2H' % self.order, data[position:position + 4])
+                position += 4
+                output[code] = offset
+            info['entries'] = output
 
     def _gen_bitmap(self, data, width, height, pixel_format):
-        req_width = width
-        req_height = height
+        data_width = width
+        data_height = height
 
-        bmp = [[0, 0, 0, 0]] * (width * height)
-        stride = width
-
+        # increase the size of the image to a power-of-two boundary
         width = 1 << int(math.ceil(math.log(width, 2)))
         height = 1 << int(math.ceil(math.log(height, 2)))
 
-        offset = 0
+        # initialize empty bitmap memory (RGBA8)
+        bmp = [[0, 0, 0, 0]] * (width * height)
 
-        # if pixel_format == 0x0B:
-        #    for y in range(height):
-        #        for x in range(width):
-        #            pos = ((y / 2) * width) + (x / 2)
-        #            shift = (1 - (pos % 2)) * 4
-        #            pixel = (ord(data[pos]) >> shift) & 0xF
-        #
-        #
-        #            bmp[(y * width) + x] = [255, 255, 255, pixel * 0x11]
+        tile_width = width / 8
+        tile_height = height / 8
 
-        for y in range(0, height, 8):
-            for x in range(0, width, 8):
-                for i in range(64):
-                    x2 = i % 8
-                    if x + x2 >= req_width:
-                        continue
-                    y2 = i / 8
-                    if y + y2 >= req_height:
-                        continue
-                    pos = TILE_ORDER[x2 % 4 + y2 % 4 * 4] + 16 * (x2 / 4) + 32 * (y2 / 4)
-                    shift = (pos & 1) * 4
-                    bmp[(y + y2) * stride + x + x2] = \
-                        [255, 255, 255, ((ord(data[offset + pos / 2]) >> shift) & 0xF) * 0x11]
+        # sheet is composed of 8x8 pixel tiles
+        for tile_y in range(tile_height):
+            for tile_x in range(tile_width):
 
-                offset += 64 / 2
+                # tile is composed of 2x2 sub-tiles
+                for y in range(2):
+                    for x in range(2):
+
+                        # sub-tile is composed of 2x2 pixel groups
+                        for y2 in range(2):
+                            for x2 in range(2):
+
+                                # pixel group is composed of 2x2 pixels (finally)
+                                for y3 in range(2):
+                                    for x3 in range(2):
+                                        if tile_y + y + y2 + y3 >= data_height:
+                                            continue
+                                        if tile_x + x + x2 + x3 >= data_width:
+                                            continue
+
+                                        pixel_x = (x3 + (x2 * 2) + (x * 4) + (tile_x * 8))
+                                        pixel_y = (y3 + (y2 * 2) + (y * 4) + (tile_y * 8))
+
+                                        data_x = (x3 + (x2 * 4) + (x * 16) + (tile_x * 64))
+                                        data_y = ((y3 * 2) + (y2 * 8) + (y * 32) + (tile_y * width * 8))
+
+                                        data_pos = data_x + data_y
+                                        bmp_pos = pixel_x + (pixel_y * width)
+
+                                        # TODO: get this based on the pixel format...
+                                        # A4 = 4 bits of alpha, 15 possible values, each unit is worth 17/255 alpha
+                                        # since we've got 2 pixels per 8-bit byte we need to trim of the other bits
+                                        # so we can just have a single pixel
+                                        shift = (data_pos & 1) * 4
+                                        byte = ord(data[data_pos / 2])
+                                        alpha = ((byte >> shift) & 0xF) * 0x11
+                                        bmp[bmp_pos] = (0xFF, 0xFF, 0xFF, alpha)
 
         final_bmp = []
-        for y in range(req_height):
+        for tile_y in range(data_height):
             row = []
-            for x in range(req_width):
-                for i in bmp[(y * req_width) + x]:
-                    row.append(i)
+            for tile_x in range(data_width):
+                for pixel in bmp[(tile_y * data_width) + tile_x]:
+                    row.append(pixel)
             final_bmp.append(row)
-        out = png.Writer(req_width, req_height, alpha=True)
+        out = png.Writer(data_width, data_height, alpha=True)
         f = open('test.png', 'wb')
         out.write(f, final_bmp)
         f.close()
