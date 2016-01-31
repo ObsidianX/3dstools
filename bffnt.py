@@ -1,5 +1,6 @@
 #!/usr/bin/python
 import argparse
+import json
 import math
 import os.path
 import struct
@@ -8,6 +9,7 @@ import struct
 # TGLP = Texture Glyph
 # CWDH = Character Widths
 # CMAP = Character Mapping
+import png
 
 VERSION = 0x04000000
 
@@ -40,7 +42,7 @@ FORMAT_L8 = 0x07
 FORMAT_A8 = 0x08
 FORMAT_LA4 = 0x09
 FORMAT_L4 = 0x0A
-FORAMT_A4 = 0x0B
+FORMAT_A4 = 0x0B
 FORMAT_ETC1 = 0x0C
 FORMAT_ETC1A4 = 0x0D
 
@@ -56,7 +58,7 @@ PIXEL_FORMATS = {
     FORMAT_A8: 'A8',
     FORMAT_LA4: 'LA4',
     FORMAT_L4: 'L4',
-    FORAMT_A4: 'A4',
+    FORMAT_A4: 'A4',
     FORMAT_ETC1: 'ETC1',
     FORMAT_ETC1A4: 'ETC1A4'
 }
@@ -86,6 +88,7 @@ class Bffnt:
     def read(self, filename):
         data = open(filename, 'r').read()
         self.file_size = len(data)
+        self.filename = filename
 
         self._parse_header(data[:FFNT_HEADER_SIZE])
         position = FFNT_HEADER_SIZE
@@ -101,9 +104,6 @@ class Bffnt:
         self._parse_tglp_header(data[position:position + TGLP_HEADER_SIZE])
         if self.invalid:
             return
-
-        position = self.tglp['sheetOffset']
-        self._parse_tglp_data(data[position:position + self.tglp['size']])
 
         # navigate to CWDH (offset skips the MAGIC+size)
         cwdh = self.cwdh_offset
@@ -128,6 +128,71 @@ class Bffnt:
             position += CMAP_HEADER_SIZE
             info = self.cmap_sections[-1]
             self._parse_cmap_data(info, data[position:position + info['size'] - CMAP_HEADER_SIZE])
+
+        # convert pixels to RGBA8
+        position = self.tglp['sheetOffset']
+        self._parse_tglp_data(data[position:position + self.tglp['sheet']['size']])
+
+    def extract(self):
+        basename = os.path.splitext(os.path.basename(self.filename))[0]
+
+        glyph_widths = {}
+        for cwdh in self.cwdh_sections:
+            for index in range(cwdh['start'], cwdh['end'] + 1):
+                glyph_widths[index] = cwdh['data'][index - cwdh['start']]
+
+        glyph_mapping = {}
+        for cmap in self.cmap_sections:
+            if cmap['type'] == MAPPING_DIRECT:
+                for code in range(cmap['start'], cmap['end']):
+                    glyph_mapping[unichr(code)] = code - cmap['start'] + cmap['indexOffset']
+            elif cmap['type'] == MAPPING_TABLE:
+                for code in range(cmap['start'], cmap['end']):
+                    index = cmap['indexTable'][code - cmap['start']]
+                    if index != 0xFFFF:
+                        glyph_mapping[unichr(code)] = index
+            elif cmap['type'] == MAPPING_SCAN:
+                for code in cmap['entries'].keys():
+                    glyph_mapping[code] = cmap['entries'][code]
+
+        # safe JSON manifest
+        json_file = open('%s_manifest.json' % basename, 'w')
+        json_file.write(json.dumps({
+            'fontInfo': self.font_info,
+            'textureInfo': {
+                'glyph': self.tglp['glyph'],
+                'sheetCount': self.tglp['sheetCount'],
+                'sheetInfo': {
+                    'cols': self.tglp['sheet']['cols'],
+                    'rows': self.tglp['sheet']['rows'],
+                    'width': self.tglp['sheet']['width'],
+                    'height': self.tglp['sheet']['height'],
+                    'colorFormat': PIXEL_FORMATS[self.tglp['sheet']['format']]
+                }
+            },
+            'glyphWidths': glyph_widths,
+            'glyphMap': glyph_mapping
+        }, indent=2, sort_keys=True))
+        json_file.close()
+
+        # save sheet bitmaps
+        for i in range(self.tglp['sheetCount']):
+            sheet = self.tglp['sheets'][i]
+            width = sheet['width']
+            height = sheet['height']
+            png_data = []
+            for y in range(height):
+                row = []
+                for x in range(width):
+                    for color in sheet['data'][x + (y * width)]:
+                        row.append(color)
+
+                png_data.append(row)
+
+            file = open('%s_sheet%d.png' % (basename, i), 'wb')
+            writer = png.Writer(width, height, alpha=True)
+            writer.write(file, png_data)
+            file.close()
 
     def _parse_header(self, data):
         magic, bom, header_size, version, file_size, sections = struct.unpack(FFNT_HEADER_STRUCT, data)
@@ -197,6 +262,7 @@ class Bffnt:
                 'glyphWidth': def_glyph_width,
                 'charWidth': def_char_width
             },
+            'font_type': font_type,
             'encoding': encoding
         }
 
@@ -222,7 +288,7 @@ class Bffnt:
 
     def _parse_tglp_header(self, data):
         magic, section_size, cell_width, cell_height, num_sheets, max_char_width, sheet_size, baseline_position, \
-        sheet_pixel_format, num_sheet_rows, num_sheet_cols, sheet_width, sheet_height, sheet_data_offset \
+        sheet_pixel_format, num_sheet_cols, num_sheet_rows, sheet_width, sheet_height, sheet_data_offset \
             = struct.unpack(TGLP_HEADER_STRUCT % self.order, data)
 
         if magic != TGLP_HEADER_MAGIC:
@@ -232,15 +298,15 @@ class Bffnt:
 
         self.tglp = {
             'size': section_size,
-            'cell': {
+            'glyph': {
                 'width': cell_width,
                 'height': cell_height
             },
             'sheetCount': num_sheets,
             'sheet': {
                 'size': sheet_size,
-                'rows': num_sheet_rows,
                 'cols': num_sheet_cols,
+                'rows': num_sheet_rows,
                 'width': sheet_width,
                 'height': sheet_height,
                 'format': sheet_pixel_format
@@ -264,11 +330,16 @@ class Bffnt:
         print('TGLP Sheet Data Offset: 0x%08x\n' % sheet_data_offset)
 
     def _parse_tglp_data(self, data):
-        position = self.tglp['sheetOffset']
-        self.tglp['sheets'] = {}
+        position = 0
+        self.tglp['sheets'] = []
         for i in range(self.tglp['sheetCount']):
             sheet = data[position:position + self.tglp['sheet']['size']]
-            self.tglp['sheets'][i] = self._sheet_to_bitmap(sheet)
+            width, height, bmp_data = self._sheet_to_bitmap(sheet)
+            self.tglp['sheets'].append({
+                'width': width,
+                'height': height,
+                'data': bmp_data
+            })
 
     def _sheet_to_bitmap(self, data):
         width = self.tglp['sheet']['width']
@@ -319,38 +390,69 @@ class Bffnt:
                                         data_pos = data_x + data_y
                                         bmp_pos = pixel_x + (pixel_y * width)
 
-                                        # TODO: get this based on the pixel format...
-                                        # A4 = 4 bits of alpha, 15 possible values, each unit is worth 17/255 alpha
-                                        # since we've got 2 pixels per 8-bit byte we need to trim off the other bits
-                                        # so we can just have a single pixel
-                                        shift = (data_pos & 1) * 4
-                                        byte = ord(data[data_pos / 2])
-                                        alpha = ((byte >> shift) & 0xF) * 0x11
-                                        bmp[bmp_pos] = (0xFF, 0xFF, 0xFF, alpha)
+                                        bmp[bmp_pos] = self._get_pixel_data(data, format, data_pos)
 
-        return bmp
+        return width, height, bmp
 
     def _get_pixel_data(self, data, format, index):
+        red = green = blue = alpha = 0
+
+        # rrrrrrrr gggggggg bbbbbbbb aaaaaaaa
         if format == FORMAT_RGBA8:
             pass
 
+        # rrrrrrrr gggggggg bbbbbbbb
         elif format == FORMAT_RGB8:
             pass
 
+        # rrrrr ggggg bbbbb a
         elif format == FORMAT_RGBA5551:
             pass
 
+        # rrrrr gggggg bbbbb
         elif format == FORMAT_RGB565:
             pass
 
+        # rrrr gggg bbbb aaaa
         elif format == FORMAT_RGBA4:
             pass
 
+        # llllllll aaaaaaaa
         elif format == FORMAT_LA8:
             pass
 
+        # ??
         elif format == FORMAT_HILO8:
             pass
+
+        # llllllll
+        elif format == FORMAT_L8:
+            pass
+
+        # aaaaaaaa
+        elif format == FORMAT_A8:
+            pass
+
+        # llll
+        elif format == FORMAT_L4:
+            pass
+
+        # aaaa
+        elif format == FORMAT_A4:
+            byte = ord(data[index / 2])
+            shift = (index & 1) * 4
+            alpha = ((byte >> shift) & 0xF) * 0x11
+            green = red = blue = 0xFF
+
+        # compressed
+        elif format == FORMAT_ETC1:
+            pass
+
+        # compress w/alpha
+        elif format == FORMAT_ETC1A4:
+            pass
+
+        return (red, green, blue, alpha)
 
     def _parse_cwdh_header(self, data):
         magic, section_size, start_index, end_index, next_cwdh_offset \
@@ -387,6 +489,7 @@ class Bffnt:
                 'glyph': glyph,
                 'char': char
             })
+        info['data'] = output
 
     def _parse_cmap_header(self, data):
         magic, section_size, code_begin, code_end, map_method, unknown, next_cmap_offset \
@@ -397,7 +500,7 @@ class Bffnt:
 
         self.cmap_sections.append({
             'size': section_size,
-            'begin': code_begin,
+            'start': code_begin,
             'end': code_end,
             'type': map_method
         })
@@ -419,11 +522,11 @@ class Bffnt:
             info['indexOffset'] = struct.unpack('%sH' % self.order, data[2])
 
         elif type == MAPPING_TABLE:
-            count = info['end'] - info['begin'] + 1
+            count = info['end'] - info['start'] + 1
             position = 0
             output = []
             for i in range(count):
-                offset = struct.unpack('%sH' % self.order, data[position:position + 2])
+                offset = struct.unpack('%sH' % self.order, data[position:position + 2])[0]
                 position += 2
                 output.append(offset)
             info['indexTable'] = output
@@ -434,9 +537,9 @@ class Bffnt:
             position += 2
             output = {}
             for i in range(count):
-                code, offset = struct.unpack('%s2H' % self.order, data[position:position + 4])
+                code, offset = struct.unpack('%s2sH' % self.order, data[position:position + 4])
                 position += 4
-                output[code] = offset
+                output[code.decode('utf-16')] = offset
             info['entries'] = output
 
 
@@ -455,3 +558,4 @@ if __name__ == '__main__':
 
     bffnt = Bffnt()
     bffnt.read(args.file)
+    bffnt.extract()
