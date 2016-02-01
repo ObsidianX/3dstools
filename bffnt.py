@@ -4,13 +4,14 @@ import json
 import math
 import os.path
 import struct
+import sys
+
+import png
 
 # FINF = Font Info
 # TGLP = Texture Glyph
 # CWDH = Character Widths
 # CMAP = Character Mapping
-import png
-import sys
 
 VERSION = 0x04000000
 
@@ -681,7 +682,7 @@ class Bffnt:
                                             # multiple pixels (A4/L4)
                                             bytes = self._get_tglp_pixel_data(bmp, format, bmp_pos)
                                             if len(bytes) > 1:
-                                                data[data_pos:data_pos+len(bytes)] = bytes
+                                                data[data_pos:data_pos + len(bytes)] = bytes
                                             else:
                                                 if PIXEL_FORMAT_SIZE[format] == 4:
                                                     data_pos /= 2
@@ -985,7 +986,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='BFFNT Converter Tool')
     parser.add_argument('-v', '--verbose', help='print more data when working', action='store_true', default=False)
     parser.add_argument('-d', '--debug', help='print debug information', action='store_true', default=False)
-    parser.add_argument('-y', '--yes', help='answer yes to any questions (overwriting files)', action='store_true', default=False)
+    parser.add_argument('-y', '--yes', help='answer yes to any questions (overwriting files)', action='store_true',
+                        default=False)
     group = parser.add_mutually_exclusive_group()
     group.add_argument('-l', '--little-endian', help='Use little endian encoding in the created BFFNT file (default)',
                        action='store_true', default=False)
