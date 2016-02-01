@@ -679,7 +679,13 @@ class Bffnt:
                                         if to_tglp:
                                             # OR the data since there are pixel formats which use the same byte for
                                             # multiple pixels (A4/L4)
-                                            data[data_pos / 2] |= self._get_tglp_pixel_data(bmp, format, bmp_pos)
+                                            bytes = self._get_tglp_pixel_data(bmp, format, bmp_pos)
+                                            if len(bytes) > 1:
+                                                data[data_pos:data_pos+len(bytes)] = bytes
+                                            else:
+                                                if PIXEL_FORMAT_SIZE[format] == 4:
+                                                    data_pos /= 2
+                                                data[data_pos] |= bytes[0]
                                         else:
                                             bmp[bmp_pos] = self._get_pixel_data(data, format, data_pos)
 
@@ -693,72 +699,182 @@ class Bffnt:
 
         # rrrrrrrr gggggggg bbbbbbbb aaaaaaaa
         if format == FORMAT_RGBA8:
-            pass
+            red, green, blue, alpha = struct.unpack('4B', data[index * 4:index * 4 + 4])
 
         # rrrrrrrr gggggggg bbbbbbbb
         elif format == FORMAT_RGB8:
-            pass
+            red, green, blue = struct.unpack('3B', data[index * 3:index * 3 + 3])
+            alpha = 255
 
-        # rrrrr ggggg bbbbb a
+        # rrrrrgg gggbbbbba
         elif format == FORMAT_RGBA5551:
-            pass
+            b1, b2 = struct.unpack('2B', data[index * 2:index * 2 + 2])
 
-        # rrrrr gggggg bbbbb
+            red = ((b1 >> 3) & 0x1F)
+            green = (b1 & 0x07) | ((b2 >> 6) & 0x03)
+            blue = (b2 >> 1) & 0x1F
+            alpha = (b2 & 0x01) * 255
+
+        # rrrrrggg gggbbbbb
         elif format == FORMAT_RGB565:
-            pass
+            b1, b2 = struct.unpack('2B', data[index * 2:index * 2 + 2])
 
-        # rrrr gggg bbbb aaaa
+            red = (b1 >> 3) & 0x1F
+            green = (b1 & 0x7) | ((b2 >> 5) & 0x7)
+            blue = (b2 & 0x1F)
+            alpha = 255
+
+        # rrrrgggg bbbbaaaa
         elif format == FORMAT_RGBA4:
-            pass
+            b1, b2 = struct.unpack('2B', data[index * 2:index * 2 + 2])
+
+            red = ((b1 >> 4) & 0x0F) * 0x11
+            green = (b1 & 0x0F) * 0x11
+            blue = ((b2 >> 4) & 0x0F) * 0x11
+            alpha = (b2 & 0x0F) * 0x11
 
         # llllllll aaaaaaaa
         elif format == FORMAT_LA8:
-            pass
+            l, alpha = struct.unpack('2B', data[index * 2:index * 2 + 2])
+            red = green = blue = l
 
         # ??
         elif format == FORMAT_HILO8:
+            # TODO
             pass
 
         # llllllll
         elif format == FORMAT_L8:
-            pass
+            red = green = blue = struct.unpack('B', data[index:index + 1])
+            alpha = 255
 
         # aaaaaaaa
         elif format == FORMAT_A8:
-            pass
+            alpha = struct.unpack('B', data[index:index + 1])
+            red = green = blue = 255
 
-        # llll aaaa
+        # llllaaaa
         elif format == FORMAT_LA4:
-            pass
+            la = struct.unpack('B', data[index:index + 1])
+            red = green = blue = ((la >> 4) & 0x0F) * 0x11
+            alpha = (la & 0x0F) * 0x11
 
         # llll
         elif format == FORMAT_L4:
-            pass
+            l = struct.unpack('B', data[index / 2])
+            shift = (index & 1) * 4
+            red = green = blue = ((l >> shift) & 0x0F) * 0x11
+            alpha = 255
 
         # aaaa
         elif format == FORMAT_A4:
             byte = ord(data[index / 2])
             shift = (index & 1) * 4
-            alpha = ((byte >> shift) & 0xF) * 0x11
+            alpha = ((byte >> shift) & 0x0F) * 0x11
             green = red = blue = 0xFF
 
         # compressed
         elif format == FORMAT_ETC1:
+            # TODO
             pass
 
         # compress w/alpha
         elif format == FORMAT_ETC1A4:
+            # TODO
             pass
 
         return (red, green, blue, alpha)
 
     def _get_tglp_pixel_data(self, bmp, format, index):
         # bmp data: tuple (r, g, b, a)
+        # output: list of bytes: [255, 255]
+        red, green, blue, alpha = bmp[index]
 
-        if format == FORMAT_A4:
+        if format == FORMAT_RGBA8:
+            return [red, green, blue, alpha]
+
+        elif format == FORMAT_RGB8:
+            return [red, green, blue]
+
+        # rrrrrggg ggbbbbba
+        elif format == FORMAT_RGBA5551:
+            r5 = (red / 8) & 0x1F
+            g5 = (green / 8) & 0x1F
+            b5 = (blue / 8) & 0x1F
+            a = 1 if alpha > 0 else 0
+
+            b1 = (r5 << 3) | (g5 >> 2)
+            b2 = ((g5 << 6) | (b5 << 1) | a) & 0xFF
+            return [b1, b2]
+
+        # rrrrrggg gggbbbbb
+        elif format == FORMAT_RGB565:
+            r5 = (red / 8) & 0x1F
+            g6 = (green / 4) & 0x3F
+            b5 = (blue / 8) & 0x1F
+
+            b1 = (r5 << 3) | (g6 >> 3)
+            b2 = ((g6 << 5) | b5) & 0xFF
+            return [b1, b2]
+
+        # rrrrgggg bbbbaaaa
+        elif format == FORMAT_RGBA4:
+            r4 = (red / 0x11) & 0x0F
+            g4 = (green / 0x11) & 0x0F
+            b4 = (blue / 0x11) & 0x0F
+            a4 = (alpha / 0x11) & 0x0F
+
+            b1 = (r4 << 4) | g4
+            b2 = (b4 << 4) | a4
+            return [b1, b2]
+
+        # llllllll aaaaaaaa
+        elif format == FORMAT_LA8:
+            l = int((red * 0.2126) + (green * 0.7152) + (blue * 0.0722))
+
+            return [l, alpha]
+
+        elif format == FORMAT_HILO8:
+            # TODO
+            pass
+
+        # llllllll
+        elif format == FORMAT_L8:
+            l = int((red * 0.2126) + (green * 0.7152) + (blue * 0.0722))
+
+            return [l]
+
+        # aaaaaaaa
+        elif format == FORMAT_A8:
+            return [alpha]
+
+        # llllaaaa
+        elif format == FORMAT_LA4:
+            l = int((red * 0.2126) + (green * 0.7152) + (blue * 0.0722)) / 0x11
+            a = (alpha / 0x11) & 0x0F
+
+            b = (l << 4) | a
+            return [b]
+
+        # llll
+        elif format == FORMAT_L4:
+            l = int((red * 0.2126) + (green * 0.7152) + (blue * 0.0722))
+            shift = (index & 1) * 4
+            return [l << shift]
+
+        # aaaa
+        elif format == FORMAT_A4:
             alpha = (bmp[index][3] / 0x11) & 0xF
             shift = (index & 1) * 4
-            return alpha << shift
+            return [alpha << shift]
+
+        elif format == FORMAT_ETC1:
+            # TODO
+            pass
+
+        elif format == FORMAT_ETC1A4:
+            # TODO
+            pass
 
     def _parse_cwdh_header(self, data):
         magic, section_size, start_index, end_index, next_cwdh_offset \
