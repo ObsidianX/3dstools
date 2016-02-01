@@ -70,7 +70,7 @@ When packing the MSBT with the `--colors` flag, the parser will look for those c
 ```
 
 ## sarc.py
-SARC (Simple ARChive?) tool that can extract and pack both uncompressed and ZLIB compressed archives.
+SARC (Sorted ARChive?) tool that can extract and pack both uncompressed and ZLIB compressed archives.
 
 Uses TAR-like command line syntax.
 
@@ -129,3 +129,51 @@ subdir/file4.txt
 file1.txt
 file2.txt
 ```
+
+## bffnt.py
+
+BFFNT extract/create tool.  Creates a PNG file from the texture atlases in a BFFNT as well as a JSON manifest.
+
+### Usage
+
+```
+usage: bffnt [-h] [-v] [-d] [-y] [-l | -b] (-c | -x) -f bffnt
+
+BFFNT Converter Tool
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -v, --verbose         print more data when working
+  -d, --debug           print debug information
+  -y, --yes             answer yes to any questions (overwriting files)
+  -l, --little-endian   Use little endian encoding in the created BFFNT file
+                        (default)
+  -b, --big-endian      Use big endian encoding in the created BFFNT file
+  -c, --create          create BFFNT file from extracted files
+  -x, --extract         extract BFFNT into PNG/JSON files
+  -f bffnt, --file bffnt
+                        BFFNT file
+```
+
+#### Examples
+
+Extract a BFFNT to PNG/JSON:
+
+```
+bffnt.py -xf Sample.bffnt
+```
+
+Results:
+
+```
+Sample_manifest.json
+Sample_sheet0.png
+```
+
+Create a BFFNT from PNG/JSON:
+
+```
+bffnt.py -cf Sample.bffnt
+```
+
+Note: `Sample_manifest.json` and `Sample_sheet0.png` must be in the current directory to build `Sample.bffnt`
