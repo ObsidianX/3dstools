@@ -985,6 +985,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='BFFNT Converter Tool')
     parser.add_argument('-v', '--verbose', help='print more data when working', action='store_true', default=False)
     parser.add_argument('-d', '--debug', help='print debug information', action='store_true', default=False)
+    parser.add_argument('-y', '--yes', help='answer yes to any questions (overwriting files)', action='store_true', default=False)
     group = parser.add_mutually_exclusive_group()
     group.add_argument('-l', '--little-endian', help='Use little endian encoding in the created BFFNT file (default)',
                        action='store_true', default=False)
@@ -1005,7 +1006,7 @@ if __name__ == '__main__':
     basename = os.path.splitext(os.path.basename(args.file))[0]
     json_file = '%s_manifest.json' % basename
 
-    if args.extract and os.path.exists(json_file):
+    if args.extract and os.path.exists(json_file) and not args.yes:
         print('JSON output file exists.')
         answer = prompt_yes_no('Overwrite? (y/N) ')
 
@@ -1015,7 +1016,7 @@ if __name__ == '__main__':
 
     sheet_file = '%s_sheet0.png' % basename
 
-    if args.extract and os.path.exists(sheet_file):
+    if args.extract and os.path.exists(sheet_file) and not args.yes:
         print('At least one sheet PNG file exists.')
         answer = prompt_yes_no('Overwrite? (y/N) ')
 
@@ -1023,7 +1024,7 @@ if __name__ == '__main__':
             print('Aborted')
             sys.exit(1)
 
-    if args.create and os.path.exists(args.file):
+    if args.create and os.path.exists(args.file) and not args.yes:
         print('BFFNT output file exists.')
         answer = prompt_yes_no('Overwrite? (y/N) ')
 
