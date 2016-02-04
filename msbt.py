@@ -78,6 +78,12 @@ class Msbt:
             # TODO:
             # elif magic == NLI1_MAGIC:
 
+            else:
+                while position < self.file_size:
+                    if data[position] == '\xAB':
+                        break
+                    position += 1
+
             sections_left -= 1
 
             self.section_order.append(magic)
@@ -163,8 +169,7 @@ class Msbt:
 
         output['structure']['LBL1']['lists'] = self.sections['LBL1']['data']
 
-        file = open(filename, 'w')
-        file.write(json.dumps(output, indent=2, sort_keys=True))
+        json.dump(output, open(filename, 'w'), indent=2, sort_keys=True, ensure_ascii=False)
 
     def from_json(self, filename):
         json_data = json.load(open(filename, 'r'))
