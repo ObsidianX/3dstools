@@ -77,6 +77,13 @@ class Msbt:
 
             # TODO:
             # elif magic == NLI1_MAGIC:
+            
+            else:
+                position += struct.unpack('%sI' % self.order, data[position + 4:position + 8])[0]
+                position += TXT2_HEADER_LEN
+                if self.debug:
+                    print('\nUnknown section skipped')
+                    print('Unknown section Magic bytes\n: %s' % magic)
 
             sections_left -= 1
 
