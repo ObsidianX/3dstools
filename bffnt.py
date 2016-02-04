@@ -746,23 +746,23 @@ class Bffnt:
 
         # llllllll
         elif format == FORMAT_L8:
-            red = green = blue = struct.unpack('B', data[index:index + 1])
+            red = green = blue = struct.unpack('B', data[index:index + 1])[0]
             alpha = 255
 
         # aaaaaaaa
         elif format == FORMAT_A8:
-            alpha = struct.unpack('B', data[index:index + 1])
+            alpha = struct.unpack('B', data[index:index + 1])[0]
             red = green = blue = 255
 
         # llllaaaa
         elif format == FORMAT_LA4:
-            la = struct.unpack('B', data[index:index + 1])
+            la = struct.unpack('B', data[index:index + 1])[0]
             red = green = blue = ((la >> 4) & 0x0F) * 0x11
             alpha = (la & 0x0F) * 0x11
 
         # llll
         elif format == FORMAT_L4:
-            l = struct.unpack('B', data[index / 2])
+            l = struct.unpack('B', data[index / 2])[0]
             shift = (index & 1) * 4
             red = green = blue = ((l >> shift) & 0x0F) * 0x11
             alpha = 255
