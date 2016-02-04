@@ -16,7 +16,7 @@ LBL1_MAGIC = 'LBL1'
 ATR1_MAGIC = 'ATR1'
 TXT2_MAGIC = 'TXT2'
 
-MSBT_HEADER_STRUCT = '=8s5HI10s'
+MSBT_HEADER_STRUCT = '=8s2H2B2HI10s'
 LBL1_HEADER_STRUCT = '%s4sI8sI'
 ATR1_HEADER_STRUCT = '%s4s4I'
 TXT2_HEADER_STRUCT = '%s4s4I'
@@ -24,6 +24,13 @@ TXT2_HEADER_STRUCT = '%s4s4I'
 SECTION_END_MAGIC = '\xAB'
 COLOR_ESCAPE = '\x03\x00\x04\x00'
 
+ENCODING_UTF8 = 0x00
+ENCODING_UTF16 = 0x01
+
+ENCODINGS = {
+    ENCODING_UTF8: "UTF-8",
+    ENCODING_UTF16: "UTF-16"
+}
 
 class Msbt:
     order = None
@@ -107,14 +114,16 @@ class Msbt:
             print('\nMSBT Magic: %s' % MSBT_MAGIC)
             print('MSBT Byte-order marker: 0x%x' % bom)
             print('MSBT Unknown1: 0x%x' % self.header_unknowns[0])
+            print('MSBT Encoding: %d (%s)' % self.encoding, ENCODINGS[self.encoding])
             print('MSBT Unknown2: 0x%x' % self.header_unknowns[1])
             print('MSBT Sections: %d' % self.section_count)
             print('MSBT Unknown3: 0x%x' % self.header_unknowns[2])
             print('MSBT File size: (unknown)')
             print('MSBT Unknown4: 0x%s\n' % self.header_unknowns[3].encode('hex'))
 
-        msbt_header = struct.pack(MSBT_HEADER_STRUCT, MSBT_MAGIC, bom, self.header_unknowns[0], self.header_unknowns[1],
-                                  self.section_count, self.header_unknowns[2], 0, str(self.header_unknowns[3]))
+        msbt_header = struct.pack(MSBT_HEADER_STRUCT, MSBT_MAGIC, bom, self.header_unknowns[0], self.encoding, 
+                                  self.header_unknowns[1], self.section_count, self.header_unknowns[2], 
+                                  0, str(self.header_unknowns[3]))
         output.write(msbt_header)
 
         for section in self.section_order:
@@ -157,6 +166,7 @@ class Msbt:
         output['structure']['MSBT'] = {
             'header': {
                 'byte_order': self.order,
+                'encoding': ENCODINGS[self.encoding],
                 'sections': self.section_count,
                 'section_order': self.section_order,
                 'unknowns': self.header_unknowns
@@ -195,6 +205,7 @@ class Msbt:
 
         msbt_header = json_data['structure']['MSBT']['header']
         self.order = msbt_header['byte_order']
+        self.encoding = msbt_header['encoding']
         self.section_order = msbt_header['section_order']
         self.section_count = msbt_header['sections']
         self.header_unknowns = msbt_header['unknowns']
@@ -212,7 +223,7 @@ class Msbt:
                 self.sections['TXT2']['data'][id] = value
 
     def _parse_header(self, data):
-        magic, bom, unknown1, unknown2, sections, unknown3, file_size, unknown4 = struct.unpack(MSBT_HEADER_STRUCT,
+        magic, bom, unknown1, encoding, unknown2, sections, unknown3, file_size, unknown4 = struct.unpack(MSBT_HEADER_STRUCT,
                                                                                                 data)
 
         if magic != MSBT_MAGIC:
@@ -234,6 +245,7 @@ class Msbt:
             print('Invalid file size reported: %d (OS reports %d)' % (file_size, self.file_size))
 
         self.section_count = sections
+        self.encoding = encoding
         # save for repacking
         self.header_unknowns = [
             unknown1,
