@@ -39,7 +39,7 @@ class Msbt:
     def read(self, filename):
         self.filename = filename
         self.file_size = os.stat(filename).st_size
-        data = open(self.filename, 'r').read()
+        data = open(self.filename, 'rb').read()
 
         self._parse_header(data[:MSBT_HEADER_LEN])
         if self.invalid:
