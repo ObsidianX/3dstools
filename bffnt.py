@@ -109,7 +109,7 @@ class Bffnt:
         self.load_order = load_order
 
     def read(self, filename):
-        data = open(filename, 'r').read()
+        data = open(filename, 'rb').read()
         self.file_size = len(data)
         self.filename = filename
 
