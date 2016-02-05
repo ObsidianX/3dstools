@@ -92,12 +92,6 @@ class Msbt:
                     print('\nUnknown section skipped')
                     print('Unknown section Magic bytes\n: %s' % magic)
 
-            else:
-                while position < self.file_size:
-                    if data[position] == '\xAB':
-                        break
-                    position += 1
-
             sections_left -= 1
 
             self.section_order.append(magic)
