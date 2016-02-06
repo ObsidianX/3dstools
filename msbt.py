@@ -114,7 +114,7 @@ class Msbt:
             print('\nMSBT Magic: %s' % MSBT_MAGIC)
             print('MSBT Byte-order marker: 0x%x' % bom)
             print('MSBT Unknown1: 0x%x' % self.header_unknowns[0])
-            print('MSBT Encoding: %d (%s)' % self.encoding, ENCODINGS[self.encoding])
+            print('MSBT Encoding: %d (%s)' % (self.encoding, ENCODINGS[self.encoding]))
             print('MSBT Unknown2: 0x%x' % self.header_unknowns[1])
             print('MSBT Sections: %d' % self.section_count)
             print('MSBT Unknown3: 0x%x' % self.header_unknowns[2])
