@@ -17,6 +17,14 @@ IMAG_HEADER_MAGIC = "imag"
 FLIM_HEADER_STRUCT = "=4s2H2IH2B"
 IMAG_HEADER_STRUCT = "%s4sI3H2BI"
 
+FLIM_UNKNOWN1 = 0x07020000
+FLIM_UNKNOWN2 = 0x01
+FLIM_UNKNOWN3 = 0x00
+FLIM_MULTIPLIER = 0
+
+IMAG_PARSE_SIZE = 0x10
+IMAG_ALIGNMENT = 0x80
+
 FORMAT_L8 = 0x00
 FORMAT_A8 = 0x01
 FORMAT_LA4 = 0x02
@@ -62,11 +70,8 @@ PIXEL_FORMAT_SIZE = {
     FORMAT_RGBA5551: 16,
     FORMAT_RGBA4: 16,
     FORMAT_RGBA8: 32,
-    FORMAT_ETC1: 4,
-    FORMAT_ETC1A4: 8,
     FORMAT_L4: 4,
-    FORMAT_A4: 4,
-    FORMAT_ETC1_2: 4
+    FORMAT_A4: 4
 }
 
 ETC_INDIV_RED1_OFFSET = 60
@@ -104,11 +109,12 @@ class Bflim:
     invalid = False
     order = None
 
-    def __init__(self, verbose=False, debug=False):
+    def __init__(self, verbose=False, debug=False, big_endian=False):
         self.verbose = verbose
         self.debug = debug
+        self.big_endian = big_endian
 
-    def read(self, filename):
+    def read(self, filename, parse_image=True):
         self.filename = filename
 
         data = open(filename, 'rb').read()
@@ -126,11 +132,13 @@ class Bflim:
         if self.invalid:
             return
 
-        bmp_data = data[:self.data_size]
-        if format == FORMAT_ETC1 or format == FORMAT_ETC1_2 or format == FORMAT_ETC1A4:
-            self._decompress_etc1(bmp_data)
-
-        self.bmp = self._data_to_bitmap(bmp_data)
+        if parse_image:
+            bmp_data = data[:self.data_size]
+            format = self.imag['format']
+            if format == FORMAT_ETC1 or format == FORMAT_ETC1_2 or format == FORMAT_ETC1A4:
+                self.bmp = self._decompress_etc1(bmp_data)
+            else:
+                self.bmp = self._data_to_bitmap(bmp_data)
 
     def extract(self):
         width = self.imag['width']
@@ -141,7 +149,7 @@ class Bflim:
             row = []
             for x in range(width):
                 for color in self.bmp[x + (y * width)]:
-                    row.append(color)
+                    row.append(int(color))
 
             png_data.append(row)
 
@@ -150,6 +158,56 @@ class Bflim:
         writer = png.Writer(width, height, alpha=True)
         writer.write(file, png_data)
         file.close()
+
+    def load(self, filename):
+        png_file = open(filename, 'rb')
+        reader = png.Reader(file=png_file)
+        width, height, pixels, metadata = reader.read()
+
+        bmp = []
+        for row in list(pixels):
+            for pixel in range(len(row) / 4):
+                bmp.append(row[pixel * 4:pixel * 4 + 4])
+
+        self.imag = {
+            'width': width,
+            'height': height,
+            'format': FORMAT_RGBA8
+        }
+
+        self.order = '>' if self.big_endian else '<'
+
+        self.bmp = self._data_to_bitmap(bmp, to_bin=True)
+
+        png_file.close()
+
+    def save(self, output_filename):
+        file = open(output_filename, 'wb')
+
+        file.write(self.bmp)
+
+        if self.big_endian:
+            bom = 0xFFFE
+        else:
+            bom = 0xFEFF
+
+        size_offset = file.tell() + 0x0C
+        flim_header = struct.pack(FLIM_HEADER_STRUCT, FLIM_HEADER_MAGIC, bom, FLIM_HEADER_SIZE, FLIM_UNKNOWN1, 0,
+                                  FLIM_UNKNOWN2, FLIM_MULTIPLIER, FLIM_UNKNOWN3)
+        file.write(flim_header)
+
+        swizzle = 4 if PIXEL_FORMAT_SIZE[self.imag['format']] == 4 else 8
+        imag_header = struct.pack(IMAG_HEADER_STRUCT % self.order, IMAG_HEADER_MAGIC, IMAG_PARSE_SIZE,
+                                  self.imag['height'], self.imag['width'], IMAG_ALIGNMENT, self.imag['format'], swizzle,
+                                  len(self.bmp))
+        file.write(imag_header)
+
+        file.seek(size_offset)
+        file.write(struct.pack('%sI' % self.order, file.tell()))
+
+        file.close()
+
+        print('All done!')
 
     def _parse_flim_header(self, data):
         magic, bom, header_size, unknown1, file_size, unknown2, multiplier, unknown3 = struct.unpack(FLIM_HEADER_STRUCT,
@@ -227,33 +285,137 @@ class Bflim:
     def _decompress_etc1(self, data):
         with_alpha = self.imag['format'] == FORMAT_ETC1A4
 
-        chunk_size = 16 if with_alpha else 8
-        chunks = len(data) / chunk_size
+        width = self.imag['width']
+        height = self.imag['height']
 
-        for i in range(chunks):
-            chunk = data[i * chunk_size:i * chunk_size + chunk_size]
+        block_size = 16 if with_alpha else 8
 
-            alpha = 0xFFffFFffFFffFFff
-            if with_alpha:
-                alpha = struct.unpack('%sQ' % self.order, chunk[:8])[0]
+        bmp = [[0, 0, 0, 0]] * width * height
 
-            pixels = chunk[8:]
+        tile_width = int(math.ceil(width / 8.0))
+        tile_height = int(math.ceil(height / 8.0))
 
-            differential = (pixels >> ETC_DIFFERENTIAL_BIT) & 0x01 == 1
-            orientation = (pixels >> ETC_ORIENTATION_BIT) & 0x01 == 1
-            table1 = (pixels >> ETC_TABLE1_OFFSET) & 0x7
-            table2 = (pixels >> ETC_TABLE2_OFFSET) & 0x7
+        # here's the kicker: there will always be a power-of-two amount of tiles
+        tile_width = 1 << int(math.ceil(math.log(tile_width, 2)))
+        tile_height = 1 << int(math.ceil(math.log(tile_height, 2)))
 
-            if differential:
-                pass
-            else:
-                # 4 bits per channel, 16 possible values
-                red1 = ((data >> ETC_INDIV_RED1_OFFSET) & 0xF) * 0x11
-                green1 = ((data >> ETC_INDIV_GREEN1_OFFSET) & 0xF) * 0x11
-                blue1 = ((data >> ETC_INDIV_BLUE1_OFFSET) & 0xF) * 0x11
-                red2 = ((data >> ETC_RED2_OFFSET) & 0xF) * 0x11
-                green2 = ((data >> ETC_GREEN2_OFFSET) & 0xF) * 0x11
-                blue2 = ((data >> ETC_BLUE2_OFFSET) & 0xF) * 0x11
+        pos = 0
+
+        # texture is composed of 8x8 tiles
+        for tile_y in range(tile_height):
+            for tile_x in range(tile_width):
+
+                # in ETC1 mode each tile is composed of 2x2, compressed sub-tiles, 4x4 pixels each
+                for block_y in range(2):
+                    for block_x in range(2):
+                        data_pos = pos
+                        pos += block_size
+
+                        block = data[data_pos:data_pos + block_size]
+
+                        alphas = 0xFFffFFffFFffFFff
+                        if with_alpha:
+                            alphas = struct.unpack('%sQ' % self.order, block[:8])[0]
+                            block = block[8:]
+
+                        pixels = struct.unpack('%sQ' % self.order, block)[0]
+
+                        # how colors are stored in the high-order 32 bits
+                        differential = (pixels >> ETC_DIFFERENTIAL_BIT) & 0x01 == 1
+                        # how the sub blocks are divided, 0 = 2x4, 1 = 4x2
+                        horizontal = (pixels >> ETC_ORIENTATION_BIT) & 0x01 == 1
+                        # once the colors are decoded for the sub block this determines how to shift the colors
+                        # which modifier row to use for sub block 1
+                        table1 = ETC_MODIFIERS[(pixels >> ETC_TABLE1_OFFSET) & 0x07]
+                        # which modifier row to use for sub block 2
+                        table2 = ETC_MODIFIERS[(pixels >> ETC_TABLE2_OFFSET) & 0x07]
+
+                        color1 = [0, 0, 0]
+                        color2 = [0, 0, 0]
+
+                        if differential:
+                            # grab the 5-bit code words
+                            r = ((pixels >> ETC_DIFF_RED1_OFFSET) & 0x1F)
+                            g = ((pixels >> ETC_DIFF_GREEN1_OFFSET) & 0x1F)
+                            b = ((pixels >> ETC_DIFF_BLUE_OFFSET) & 0x1F)
+
+                            # extends from 5 to 8 bits by duplicating the 3 most significant bits
+                            color1[0] = (r << 3) | ((r >> 2) & 0x07)
+                            color1[1] = (g << 3) | ((g >> 2) & 0x07)
+                            color1[2] = (b << 3) | ((b >> 2) & 0x07)
+
+                            # add the 2nd block, 3-bit code words to the original words (2's complement!)
+                            r += self._complement((pixels >> ETC_RED2_OFFSET) & 0x07, 3)
+                            g += self._complement((pixels >> ETC_GREEN2_OFFSET) & 0x07, 3)
+                            b += self._complement((pixels >> ETC_BLUE2_OFFSET) & 0x07, 3)
+
+                            # extend from 5 to 8 bits like before
+                            color2[0] = (r << 3) | ((r >> 2) & 0x07)
+                            color2[1] = (g << 3) | ((g >> 2) & 0x07)
+                            color2[2] = (b << 3) | ((b >> 2) & 0x07)
+                        else:
+                            # 4 bits per channel, 16 possible values
+
+                            # 1st block
+                            color1[0] = ((pixels >> ETC_INDIV_RED1_OFFSET) & 0x0F) * 0x11
+                            color1[1] = ((pixels >> ETC_INDIV_GREEN1_OFFSET) & 0x0F) * 0x11
+                            color1[2] = ((pixels >> ETC_INDIV_BLUE1_OFFSET) & 0x0F) * 0x11
+
+                            # 2nd block
+                            color2[0] = ((pixels >> ETC_RED2_OFFSET) & 0x0F) * 0x11
+                            color2[1] = ((pixels >> ETC_GREEN2_OFFSET) & 0x0F) * 0x11
+                            color2[2] = ((pixels >> ETC_BLUE2_OFFSET) & 0x0F) * 0x11
+
+                        # now that we have two sub block pixel colors to start from,
+                        # each pixel is read as a modifier value
+
+                        # 16 pixels are described with 2 bits each,
+                        # one selecting the sign, the second the value
+
+                        amounts = pixels & 0xFFFF
+                        signs = (pixels >> 16) & 0xFFFF
+
+                        for pixel_y in range(4):
+                            for pixel_x in range(4):
+                                x = pixel_x + (block_x * 4) + (tile_x * 8)
+                                y = pixel_y + (block_y * 4) + (tile_y * 8)
+
+                                if x >= width:
+                                    continue
+                                if y >= height:
+                                    continue
+
+                                offset = pixel_x * 4 + pixel_y
+
+                                if horizontal:
+                                    table = table1 if pixel_y < 2 else table2
+                                    color = color1 if pixel_y < 2 else color2
+                                else:
+                                    table = table1 if pixel_x < 2 else table2
+                                    color = color1 if pixel_x < 2 else color2
+
+                                # determine the amount to shift the color
+                                amount = table[(amounts >> offset) & 0x01]
+                                # and in which direction. 1 = -, 0 = +
+                                sign = (signs >> offset) & 0x01
+
+                                if sign == 1:
+                                    amount *= -1
+
+                                red = max(min(color[0] + amount, 0xFF), 0)
+                                green = max(min(color[1] + amount, 0xFF), 0)
+                                blue = max(min(color[2] + amount, 0xFF), 0)
+                                alpha = ((alphas >> (offset * 4)) & 0x0F) * 0x11
+
+                                pixel_pos = y * width + x
+
+                                bmp[pixel_pos] = [red, green, blue, alpha]
+        return bmp
+
+    def _complement(self, input, bits):
+        if input >> (bits - 1) == 0:
+            return input
+        return input - (1 << bits)
 
     def _data_to_bitmap(self, data, to_bin=False):
         width = self.imag['width']
@@ -269,7 +431,7 @@ class Bflim:
 
         if to_bin:
             bmp = data
-            data = [0] * self.imag[self.data_size]
+            data = [0] * int(self.imag['width'] * self.imag['height'] * (PIXEL_FORMAT_SIZE[self.imag['format']] / 8.0))
         else:
             # initialize empty bitmap memory (RGBA8)
             bmp = [[0, 0, 0, 0]] * (width * height)
@@ -277,7 +439,7 @@ class Bflim:
         tile_width = width / 8
         tile_height = height / 8
 
-        # sheet is composed of 8x8 pixel tiles
+        # texture is composed of 8x8 pixel tiles
         for tile_y in range(tile_height):
             for tile_x in range(tile_width):
 
@@ -313,6 +475,7 @@ class Bflim:
                                             # multiple pixels (A4/L4)
                                             bytes = self._get_pixel_data(bmp, format, bmp_pos)
                                             if len(bytes) > 1:
+                                                print bytes
                                                 data[data_pos:data_pos + len(bytes)] = bytes
                                             else:
                                                 if PIXEL_FORMAT_SIZE[format] == 4:
@@ -409,16 +572,6 @@ class Bflim:
             alpha = ((byte >> shift) & 0x0F) * 0x11
             green = red = blue = 0xFF
 
-        # compressed
-        elif format == FORMAT_ETC1:
-            # TODO
-            pass
-
-        # compress w/alpha
-        elif format == FORMAT_ETC1A4:
-            # TODO
-            pass
-
         return (red, green, blue, alpha)
 
     def _get_pixel_data(self, bmp, format, index):
@@ -431,7 +584,8 @@ class Bflim:
             color |= red << 24
             green |= green << 16
             blue |= blue << 8
-            return struct.pack('%sI' % self.order, color)
+            ordered = struct.pack('%sI' % self.order, color)
+            return list(struct.unpack('=4B', ordered))
 
         elif format == FORMAT_RGB8:
             return [red, green, blue]
@@ -523,17 +677,27 @@ if __name__ == '__main__':
     parser.add_argument('-d', '--debug', help='print debug information', action='store_true', default=False)
     parser.add_argument('-y', '--yes', help='answer yes to any questions (overwriting files)', action='store_true',
                         default=False)
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument('-c', '--create', help='create BFFNT file from extracted files', action='store_true',
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('-l', '--little-endian', help='use Little Endian when reading/writing (default)',
+                       action='store_true', default=True)
+    group.add_argument('-b', '--big-endian', help='use Big Endian when reading/writing', action='store_true',
                        default=False)
-    group.add_argument('-x', '--extract', help='extract BFFNT into PNG/JSON files', action='store_true', default=False)
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument('-c', '--create', metavar='png', help='create BFLIM file from PNG', default=False)
+    group.add_argument('-x', '--extract', help='convert BFLIM to PNG', action='store_true', default=False)
+    group.add_argument('-i', '--info', help='just list debug info and quit', action='store_true', default=False)
     parser.add_argument('bflim_file', help='FLIM file')
     args = parser.parse_args()
 
-    bflim = Bflim(verbose=args.verbose, debug=args.debug)
+    bflim = Bflim(verbose=args.verbose, debug=args.debug, big_endian=args.big_endian)
 
-    if args.extract:
-        bflim.read(args.bflim_file)
+    if args.extract or args.info:
+        bflim.read(args.bflim_file, parse_image=args.extract)
         if bflim.invalid:
+            print('Invalid file')
             sys.exit(1)
-        bflim.extract()
+        if args.extract:
+            bflim.extract()
+    else:
+        bflim.load(args.create)
+        bflim.save(args.bflim_file)
