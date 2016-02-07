@@ -202,8 +202,9 @@ class Bflim:
                                   len(self.bmp))
         file.write(imag_header)
 
+        size = file.tell()
         file.seek(size_offset)
-        file.write(struct.pack('%sI' % self.order, file.tell()))
+        file.write(struct.pack('%sI' % self.order, size))
 
         file.close()
 
@@ -417,7 +418,7 @@ class Bflim:
             return input
         return input - (1 << bits)
 
-    def _data_to_bitmap(self, data, to_bin=False):
+    def _data_to_bitmap(self, data, to_bin=False, exact=True):
         width = self.imag['width']
         height = self.imag['height']
         format = self.imag['format']
@@ -425,9 +426,10 @@ class Bflim:
         data_width = width
         data_height = height
 
-        # increase the size of the image to a power-of-two boundary, if necessary
-        width = 1 << int(math.ceil(math.log(width, 2)))
-        height = 1 << int(math.ceil(math.log(height, 2)))
+        if not exact:
+            # increase the size of the image to a power-of-two boundary, if necessary
+            width = 1 << int(math.ceil(math.log(width, 2)))
+            height = 1 << int(math.ceil(math.log(height, 2)))
 
         if to_bin:
             bmp = data
@@ -454,15 +456,15 @@ class Bflim:
                                 # pixel group is composed of 2x2 pixels (finally)
                                 for y3 in range(2):
                                     for x3 in range(2):
-                                        # if the final y value is beyond the input data's height then don't read it
-                                        if tile_y + y + y2 + y3 >= data_height:
-                                            continue
-                                        # same for the x and the input data width
-                                        if tile_x + x + x2 + x3 >= data_width:
-                                            continue
-
                                         pixel_x = (x3 + (x2 * 2) + (x * 4) + (tile_x * 8))
                                         pixel_y = (y3 + (y2 * 2) + (y * 4) + (tile_y * 8))
+
+                                        # if the final y value is beyond the input data's height then don't read it
+                                        if pixel_y >= data_height:
+                                            continue
+                                        # same for the x and the input data width
+                                        if pixel_x >= data_width:
+                                            continue
 
                                         data_x = (x3 + (x2 * 4) + (x * 16) + (tile_x * 64))
                                         data_y = ((y3 * 2) + (y2 * 8) + (y * 32) + (tile_y * width * 8))
@@ -474,9 +476,11 @@ class Bflim:
                                             # OR the data since there are pixel formats which use the same byte for
                                             # multiple pixels (A4/L4)
                                             bytes = self._get_pixel_data(bmp, format, bmp_pos)
-                                            if len(bytes) > 1:
-                                                print bytes
-                                                data[data_pos:data_pos + len(bytes)] = bytes
+                                            if not self.big_endian:
+                                                bytes.reverse()
+                                            byte_len = len(bytes)
+                                            if byte_len > 1:
+                                                data[data_pos * byte_len:data_pos * byte_len + byte_len] = bytes
                                             else:
                                                 if PIXEL_FORMAT_SIZE[format] == 4:
                                                     data_pos /= 2
@@ -580,12 +584,7 @@ class Bflim:
         red, green, blue, alpha = bmp[index]
 
         if format == FORMAT_RGBA8:
-            color = alpha
-            color |= red << 24
-            green |= green << 16
-            blue |= blue << 8
-            ordered = struct.pack('%sI' % self.order, color)
-            return list(struct.unpack('=4B', ordered))
+            return [red, green, blue, alpha]
 
         elif format == FORMAT_RGB8:
             return [red, green, blue]

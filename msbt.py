@@ -209,6 +209,10 @@ class Msbt:
         self.section_count = msbt_header['sections']
         self.header_unknowns = msbt_header['unknowns']
 
+        for encoding in ENCODINGS:
+            if self.encoding == ENCODINGS[encoding]:
+                self.encoding = encoding
+
         for i in range(len(json_data['strings'])):
             self.sections['TXT2']['data'].append('')
 
@@ -425,10 +429,6 @@ class Msbt:
                 position += 2
 
             strings.append(substrings)
-
-            if self.debug:
-                print('%d: %s' % (index, string))
-                index += 1
 
         self.sections['TXT2']['data'] = strings
 
