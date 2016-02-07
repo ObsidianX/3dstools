@@ -74,6 +74,16 @@ PIXEL_FORMAT_SIZE = {
     FORMAT_A4: 4
 }
 
+SWIZZLE_NONE = 0x00
+SWIZZLE_ROT_90 = 0x04
+SWIZZLE_TRANSPOSE = 0x08
+
+SWIZZLES = {
+    SWIZZLE_NONE: "None",
+    SWIZZLE_ROT_90: "Rotate 90deg",
+    SWIZZLE_TRANSPOSE: "Transpose"
+}
+
 ETC_INDIV_RED1_OFFSET = 60
 ETC_INDIV_GREEN1_OFFSET = 52
 ETC_INDIV_BLUE1_OFFSET = 44
@@ -144,6 +154,8 @@ class Bflim:
         width = self.imag['width']
         height = self.imag['height']
 
+        # TODO: Apply transformation matrix to undo Swizzle
+
         png_data = []
         for y in range(height):
             row = []
@@ -196,9 +208,8 @@ class Bflim:
                                   FLIM_UNKNOWN2, FLIM_MULTIPLIER, FLIM_UNKNOWN3)
         file.write(flim_header)
 
-        swizzle = 4 if PIXEL_FORMAT_SIZE[self.imag['format']] == 4 else 8
         imag_header = struct.pack(IMAG_HEADER_STRUCT % self.order, IMAG_HEADER_MAGIC, IMAG_PARSE_SIZE,
-                                  self.imag['height'], self.imag['width'], IMAG_ALIGNMENT, self.imag['format'], swizzle,
+                                  self.imag['height'], self.imag['width'], IMAG_ALIGNMENT, self.imag['format'], 0,
                                   len(self.bmp))
         file.write(imag_header)
 
@@ -280,7 +291,7 @@ class Bflim:
             print('imag Height: %d' % height)
             print('imag Alignment: 0x%x' % alignment)
             print('imag Format: %s' % PIXEL_FORMATS[self.imag['format']])
-            print('imag Swizzle: %d' % swizzle)
+            print('imag Swizzle: %s (0x%x)' % (SWIZZLES[swizzle], swizzle))
             print('imag Data size: %d' % data_size)
 
     def _decompress_etc1(self, data):
