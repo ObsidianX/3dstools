@@ -119,10 +119,11 @@ class Bflim:
     invalid = False
     order = None
 
-    def __init__(self, verbose=False, debug=False, big_endian=False):
+    def __init__(self, verbose=False, debug=False, big_endian=False, swizzle=SWIZZLE_NONE):
         self.verbose = verbose
         self.debug = debug
         self.big_endian = big_endian
+        self.swizzle = swizzle
 
     def read(self, filename, parse_image=True):
         self.filename = filename
@@ -209,8 +210,8 @@ class Bflim:
         file.write(flim_header)
 
         imag_header = struct.pack(IMAG_HEADER_STRUCT % self.order, IMAG_HEADER_MAGIC, IMAG_PARSE_SIZE,
-                                  self.imag['height'], self.imag['width'], IMAG_ALIGNMENT, self.imag['format'], 0,
-                                  len(self.bmp))
+                                  self.imag['height'], self.imag['width'], IMAG_ALIGNMENT, self.imag['format'],
+                                  self.swizzle, len(self.bmp))
         file.write(imag_header)
 
         size = file.tell()
@@ -692,6 +693,8 @@ if __name__ == '__main__':
                        action='store_true', default=True)
     group.add_argument('-b', '--big-endian', help='use Big Endian when reading/writing', action='store_true',
                        default=False)
+    parser.add_argument('-s', '--swizzle', help='set the swizzle type of the output BFLIM (default: 0)\n0 - none; 4 - rotate 90deg; 8 - transpose',
+                        type=int, choices=SWIZZLES.keys(), default=SWIZZLE_NONE)
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('-c', '--create', metavar='png', help='create BFLIM file from PNG', default=False)
     group.add_argument('-x', '--extract', help='convert BFLIM to PNG', action='store_true', default=False)
@@ -699,7 +702,7 @@ if __name__ == '__main__':
     parser.add_argument('bflim_file', help='FLIM file')
     args = parser.parse_args()
 
-    bflim = Bflim(verbose=args.verbose, debug=args.debug, big_endian=args.big_endian)
+    bflim = Bflim(verbose=args.verbose, debug=args.debug, big_endian=args.big_endian, swizzle=args.swizzle)
 
     if args.extract or args.info:
         bflim.read(args.bflim_file, parse_image=args.extract)

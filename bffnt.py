@@ -411,7 +411,7 @@ class Bffnt:
             file.write(data)
             position += CWDH_HEADER_SIZE
 
-            for code in range(cwdh['start'], cwdh['end']):
+            for code in range(cwdh['start'], cwdh['end'] + 1):
                 widths = cwdh['data'][code]
                 for key in ('left', 'glyph', 'char'):
                     file.write(struct.pack('=b', widths[key]))
