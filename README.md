@@ -177,3 +177,57 @@ bffnt.py -cf Sample.bffnt
 ```
 
 Note: `Sample_manifest.json` and `Sample_sheet0.png` must be in the current directory to build `Sample.bffnt`
+
+## bflim.py
+
+BFLIM converter to and from PNG files.  This tool is still in development.
+
+Goal: Apply/remove swizzle when converting images.
+
+### Usage
+
+```
+usage: bflim [-h] [-v] [-d] [-y] [-l | -b] [-s {0,8,4}] (-c png | -x | -i)
+             bflim_file
+
+BFLIM Converter
+
+positional arguments:
+  bflim_file            FLIM file
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -v, --verbose         print more data when working
+  -d, --debug           print debug information
+  -y, --yes             answer yes to any questions (overwriting files)
+  -l, --little-endian   use Little Endian when reading/writing (default)
+  -b, --big-endian      use Big Endian when reading/writing
+  -s {0,8,4}, --swizzle {0,8,4}
+                        set the swizzle type of the output BFLIM (default: 0)
+                        0 - none; 4 - rotate 90deg; 8 - transpose
+  -c png, --create png  create BFLIM file from PNG
+  -x, --extract         convert BFLIM to PNG
+  -i, --info            just list debug info and quit
+```
+
+#### Examples
+
+Convert BFLIM to PNG:
+
+```
+bflim.py -x image.bflim
+```
+
+Convert PNG to BFLIM:
+
+```
+bflim.py -c image.png image.bflim
+```
+
+Convert PNG to BFLIM, setting swizzle to 90 degree rotation:
+
+Note: currently the PNG needs to be pre-swizzled as the `-s` flag only sets the header value.
+
+```
+bflim.py -s 4 -c image.png image.bflim
+```
