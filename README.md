@@ -182,7 +182,7 @@ Note: `Sample_manifest.json` and `Sample_sheet0.png` must be in the current dire
 
 BFLIM converter to and from PNG files.  This tool is still in development.
 
-Goal: Apply/remove swizzle when converting images.
+Goal: Apply swizzle when creating BFLIMs.
 
 ### Usage
 
