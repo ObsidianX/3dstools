@@ -82,6 +82,35 @@ PIXEL_FORMAT_SIZE = {
     FORMAT_ETC1A4: 128
 }
 
+ETC_INDIV_RED1_OFFSET = 60
+ETC_INDIV_GREEN1_OFFSET = 52
+ETC_INDIV_BLUE1_OFFSET = 44
+
+ETC_DIFF_RED1_OFFSET = 59
+ETC_DIFF_GREEN1_OFFSET = 51
+ETC_DIFF_BLUE_OFFSET = 43
+
+ETC_RED2_OFFSET = 56
+ETC_GREEN2_OFFSET = 48
+ETC_BLUE2_OFFSET = 40
+
+ETC_TABLE1_OFFSET = 37
+ETC_TABLE2_OFFSET = 34
+
+ETC_DIFFERENTIAL_BIT = 33
+ETC_ORIENTATION_BIT = 32
+
+ETC_MODIFIERS = [
+    [2, 8],
+    [5, 17],
+    [9, 29],
+    [13, 42],
+    [18, 60],
+    [24, 80],
+    [33, 106],
+    [47, 183]
+]
+
 MAPPING_DIRECT = 0x00
 MAPPING_TABLE = 0x01
 MAPPING_SCAN = 0x02
@@ -98,6 +127,8 @@ TGLP_DATA_OFFSET = 0x2000
 class Bffnt:
     order = None
     invalid = False
+    file_size = 0
+    filename = ''
     font_info = {}
     tglp = {}
     cwdh_sections = []
@@ -240,7 +271,7 @@ class Bffnt:
         return 0
 
     def extract(self):
-        basename = os.path.splitext(os.path.basename(self.filename))[0]
+        basename_ = os.path.splitext(os.path.basename(self.filename))[0]
 
         glyph_widths = {}
         for cwdh in self.cwdh_sections:
@@ -262,8 +293,8 @@ class Bffnt:
                     glyph_mapping[code] = cmap['entries'][code]
 
         # save JSON manifest
-        json_file = open('%s_manifest.json' % basename, 'w')
-        json_file.write(json.dumps({
+        json_file_ = open('%s_manifest.json' % basename_, 'w')
+        json_file_.write(json.dumps({
             'fontInfo': self.font_info,
             'textureInfo': {
                 'glyph': self.tglp['glyph'],
@@ -279,7 +310,7 @@ class Bffnt:
             'glyphWidths': glyph_widths,
             'glyphMap': glyph_mapping
         }, indent=2, sort_keys=True))
-        json_file.close()
+        json_file_.close()
 
         # save sheet bitmaps
         for i in range(self.tglp['sheetCount']):
@@ -295,14 +326,14 @@ class Bffnt:
 
                 png_data.append(row)
 
-            file = open('%s_sheet%d.png' % (basename, i), 'wb')
+            file_ = open('%s_sheet%d.png' % (basename_, i), 'wb')
             writer = png.Writer(width, height, alpha=True)
-            writer.write(file, png_data)
-            file.close()
+            writer.write(file_, png_data)
+            file_.close()
 
     def save(self, filename):
-        file = open(filename, 'wb')
-        basename = os.path.splitext(os.path.basename(filename))[0]
+        file_ = open(filename, 'wb')
+        basename_ = os.path.splitext(os.path.basename(filename))[0]
         section_count = 0
 
         bom = 0
@@ -316,7 +347,7 @@ class Bffnt:
         section_count_pos = 0x10
 
         data = struct.pack(FFNT_HEADER_STRUCT, FFNT_HEADER_MAGIC, bom, FFNT_HEADER_SIZE, VERSION, 0, 0)
-        file.write(data)
+        file_.write(data)
 
         position = FFNT_HEADER_SIZE
 
@@ -331,7 +362,7 @@ class Bffnt:
                            font_info['height'], font_info['width'], font_info['ascent'], font_info['lineFeed'],
                            font_info['alterCharIdx'], default_width['left'], default_width['glyphWidth'],
                            default_width['charWidth'], font_info['encoding'], 0, 0, 0)
-        file.write(data)
+        file_.write(data)
         position += FINF_HEADER_SIZE
 
         section_count += 1
@@ -342,27 +373,27 @@ class Bffnt:
         tglp_size_pos = position + 0x04
         tglp_data_size = int(sheet['width'] * sheet['height'] * (PIXEL_FORMAT_SIZE[sheet['format']] / 8.0))
 
-        file.seek(finf_tglp_offset_pos)
-        file.write(struct.pack('%sI' % self.order, position + 8))
-        file.seek(position)
+        file_.seek(finf_tglp_offset_pos)
+        file_.write(struct.pack('%sI' % self.order, position + 8))
+        file_.seek(position)
 
         tglp_start_pos = position
         data = struct.pack(TGLP_HEADER_STRUCT % self.order, TGLP_HEADER_MAGIC, 0, tglp['glyph']['width'],
                            tglp['glyph']['height'], tglp['sheetCount'], tglp['maxCharWidth'], tglp_data_size,
                            tglp['glyph']['baseline'], sheet['format'], sheet['cols'], sheet['rows'], sheet['width'],
                            sheet['height'], TGLP_DATA_OFFSET)
-        file.write(data)
+        file_.write(data)
 
-        file.seek(TGLP_DATA_OFFSET)
+        file_.seek(TGLP_DATA_OFFSET)
         position = TGLP_DATA_OFFSET
 
         section_count += 1
 
         for idx in range(tglp['sheetCount']):
-            sheet_filename = '%s_sheet%d.png' % (basename, idx)
-            sheet_file = open(sheet_filename, 'rb')
+            sheet_filename = '%s_sheet%d.png' % (basename_, idx)
+            sheet_file_ = open(sheet_filename, 'rb')
 
-            reader = png.Reader(file=sheet_file)
+            reader = png.Reader(file=sheet_file_)
             width, height, pixels, metadata = reader.read()
 
             if width != sheet['width'] or height != sheet['height']:
@@ -381,17 +412,17 @@ class Bffnt:
                 for pixel in range(len(row) / 4):
                     bmp.append(row[pixel * 4:pixel * 4 + 4])
             data = self._sheet_to_bitmap(bmp, to_tglp=True)
-            file.write(data)
+            file_.write(data)
             position += len(data)
 
-            sheet_file.close()
+            sheet_file_.close()
 
-        file.seek(tglp_size_pos)
-        file.write(struct.pack('%sI' % self.order, position - tglp_start_pos))
+        file_.seek(tglp_size_pos)
+        file_.write(struct.pack('%sI' % self.order, position - tglp_start_pos))
 
-        file.seek(finf_cwdh_offset_pos)
-        file.write(struct.pack('%sI' % self.order, position + 8))
-        file.seek(position)
+        file_.seek(finf_cwdh_offset_pos)
+        file_.write(struct.pack('%sI' % self.order, position + 8))
+        file_.seek(position)
 
         # write cwdh
         prev_cwdh_offset_pos = 0
@@ -399,31 +430,31 @@ class Bffnt:
             section_count += 1
 
             if prev_cwdh_offset_pos > 0:
-                file.seek(prev_cwdh_offset_pos)
-                file.write(struct.pack('%sI' % self.order, position + 8))
-                file.seek(position)
+                file_.seek(prev_cwdh_offset_pos)
+                file_.write(struct.pack('%sI' % self.order, position + 8))
+                file_.seek(position)
 
             size_pos = position + 0x04
             prev_cwdh_offset_pos = position + 0x0C
 
             start_pos = position
             data = struct.pack(CWDH_HEADER_STRUCT % self.order, CWDH_HEADER_MAGIC, 0, cwdh['start'], cwdh['end'] - 1, 0)
-            file.write(data)
+            file_.write(data)
             position += CWDH_HEADER_SIZE
 
             for code in range(cwdh['start'], cwdh['end'] + 1):
                 widths = cwdh['data'][code]
                 for key in ('left', 'glyph', 'char'):
-                    file.write(struct.pack('=b', widths[key]))
+                    file_.write(struct.pack('=b', widths[key]))
                     position += 1
 
-            file.seek(size_pos)
-            file.write(struct.pack('%sI' % self.order, position - start_pos))
-            file.seek(position)
+            file_.seek(size_pos)
+            file_.write(struct.pack('%sI' % self.order, position - start_pos))
+            file_.seek(position)
 
-        file.seek(finf_cmap_offset_pos)
-        file.write(struct.pack('%sI' % self.order, position + 8))
-        file.seek(position)
+        file_.seek(finf_cmap_offset_pos)
+        file_.write(struct.pack('%sI' % self.order, position + 8))
+        file_.seek(position)
 
         # write cmap
         prev_cmap_offset_pos = 0
@@ -431,9 +462,9 @@ class Bffnt:
             section_count += 1
 
             if prev_cmap_offset_pos > 0:
-                file.seek(prev_cmap_offset_pos)
-                file.write(struct.pack('%sI' % self.order, position + 8))
-                file.seek(position)
+                file_.seek(prev_cmap_offset_pos)
+                file_.write(struct.pack('%sI' % self.order, position + 8))
+                file_.seek(position)
 
             size_pos = position + 0x04
             prev_cmap_offset_pos = position + 0x10
@@ -441,37 +472,37 @@ class Bffnt:
             start_pos = position
             data = struct.pack(CMAP_HEADER_STRUCT % self.order, CMAP_HEADER_MAGIC, 0, cmap['start'], cmap['end'],
                                cmap['type'], 0, 0)
-            file.write(data)
+            file_.write(data)
             position += CMAP_HEADER_SIZE
 
-            file.write(struct.pack('%sH' % self.order, len(cmap['entries'])))
+            file_.write(struct.pack('%sH' % self.order, len(cmap['entries'])))
             position += 2
 
             if cmap['type'] == MAPPING_DIRECT:
-                file.write(struct.pack('%sH' % self.order, cmap['indexOffset']))
+                file_.write(struct.pack('%sH' % self.order, cmap['indexOffset']))
                 position += 2
             elif cmap['type'] == MAPPING_TABLE:
                 for index in cmap['indexTable']:
-                    file.write(struct.pack('%sH' % self.order, index))
+                    file_.write(struct.pack('%sH' % self.order, index))
                     position += 2
             elif cmap['type'] == MAPPING_SCAN:
                 keys = cmap['entries'].keys()
                 keys.sort()
                 for code in keys:
                     index = cmap['entries'][code]
-                    file.write(struct.pack('%s2H' % self.order, ord(code), index))
+                    file_.write(struct.pack('%s2H' % self.order, ord(code), index))
                     position += 4
 
-            file.seek(size_pos)
-            file.write(struct.pack('%sI' % self.order, position - start_pos))
-            file.seek(position)
+            file_.seek(size_pos)
+            file_.write(struct.pack('%sI' % self.order, position - start_pos))
+            file_.seek(position)
 
         # fill in size/offset placeholders
-        file.seek(file_size_pos)
-        file.write(struct.pack('%sI' % self.order, position))
+        file_.seek(file_size_pos)
+        file_.write(struct.pack('%sI' % self.order, position))
 
-        file.seek(section_count_pos)
-        file.write(struct.pack('%sI' % self.order, section_count))
+        file_.seek(section_count_pos)
+        file_.write(struct.pack('%sI' % self.order, section_count))
 
     def _parse_header(self, data):
         magic, bom, header_size, version, file_size, sections = struct.unpack(FFNT_HEADER_STRUCT, data)
@@ -518,7 +549,7 @@ class Bffnt:
 
     def _parse_finf(self, data):
         magic, section_size, font_type, height, width, ascent, line_feed, alter_char_idx, def_left, def_glyph_width, \
-        def_char_width, encoding, tglp_offset, cwdh_offset, cmap_offset \
+            def_char_width, encoding, tglp_offset, cwdh_offset, cmap_offset \
             = struct.unpack(FINF_HEADER_STRUCT % self.order, data)
 
         if magic != FINF_HEADER_MAGIC:
@@ -569,7 +600,7 @@ class Bffnt:
 
     def _parse_tglp_header(self, data):
         magic, section_size, cell_width, cell_height, num_sheets, max_char_width, sheet_size, baseline_position, \
-        sheet_pixel_format, num_sheet_cols, num_sheet_rows, sheet_width, sheet_height, sheet_data_offset \
+            sheet_pixel_format, num_sheet_cols, num_sheet_rows, sheet_width, sheet_height, sheet_data_offset \
             = struct.unpack(TGLP_HEADER_STRUCT % self.order, data)
 
         if magic != TGLP_HEADER_MAGIC:
@@ -615,19 +646,158 @@ class Bffnt:
     def _parse_tglp_data(self, data):
         position = 0
         self.tglp['sheets'] = []
+        format_ = self.tglp['sheet']['format']
         for i in range(self.tglp['sheetCount']):
             sheet = data[position:position + self.tglp['sheet']['size']]
-            width, height, bmp_data = self._sheet_to_bitmap(sheet)
+            if format_ == FORMAT_ETC1 or format_ == FORMAT_ETC1A4:
+                bmp_data = self._decompress_etc1(sheet)
+            else:
+                bmp_data = self._sheet_to_bitmap(sheet)
             self.tglp['sheets'].append({
-                'width': width,
-                'height': height,
+                'width': self.tglp['sheet']['width'],
+                'height': self.tglp['sheet']['height'],
                 'data': bmp_data
             })
+
+    def _decompress_etc1(self, data):
+        width = self.tglp['sheet']['width']
+        height = self.tglp['sheet']['height']
+
+        with_alpha = self.tglp['sheet']['format'] == FORMAT_ETC1A4
+
+        block_size = 16 if with_alpha else 8
+
+        bmp = [[0, 0, 0, 0]] * width * height
+
+        tile_width = int(math.ceil(width / 8.0))
+        tile_height = int(math.ceil(height / 8.0))
+
+        # here's the kicker: there will always be a power-of-two amount of tiles
+        tile_width = 1 << int(math.ceil(math.log(tile_width, 2)))
+        tile_height = 1 << int(math.ceil(math.log(tile_height, 2)))
+
+        pos = 0
+
+        # texture is composed of 8x8 tiles
+        for tile_y in range(tile_height):
+            for tile_x in range(tile_width):
+
+                # in ETC1 mode each tile is composed of 2x2, compressed sub-tiles, 4x4 pixels each
+                for block_y in range(2):
+                    for block_x in range(2):
+                        data_pos = pos
+                        pos += block_size
+
+                        block = data[data_pos:data_pos + block_size]
+
+                        alphas = 0xFFffFFffFFffFFff
+                        if with_alpha:
+                            alphas = struct.unpack('%sQ' % self.order, block[:8])[0]
+                            block = block[8:]
+
+                        pixels = struct.unpack('%sQ' % self.order, block)[0]
+
+                        # how colors are stored in the high-order 32 bits
+                        differential = (pixels >> ETC_DIFFERENTIAL_BIT) & 0x01 == 1
+                        # how the sub blocks are divided, 0 = 2x4, 1 = 4x2
+                        horizontal = (pixels >> ETC_ORIENTATION_BIT) & 0x01 == 1
+                        # once the colors are decoded for the sub block this determines how to shift the colors
+                        # which modifier row to use for sub block 1
+                        table1 = ETC_MODIFIERS[(pixels >> ETC_TABLE1_OFFSET) & 0x07]
+                        # which modifier row to use for sub block 2
+                        table2 = ETC_MODIFIERS[(pixels >> ETC_TABLE2_OFFSET) & 0x07]
+
+                        color1 = [0, 0, 0]
+                        color2 = [0, 0, 0]
+
+                        if differential:
+                            # grab the 5-bit code words
+                            r = ((pixels >> ETC_DIFF_RED1_OFFSET) & 0x1F)
+                            g = ((pixels >> ETC_DIFF_GREEN1_OFFSET) & 0x1F)
+                            b = ((pixels >> ETC_DIFF_BLUE_OFFSET) & 0x1F)
+
+                            # extends from 5 to 8 bits by duplicating the 3 most significant bits
+                            color1[0] = (r << 3) | ((r >> 2) & 0x07)
+                            color1[1] = (g << 3) | ((g >> 2) & 0x07)
+                            color1[2] = (b << 3) | ((b >> 2) & 0x07)
+
+                            # add the 2nd block, 3-bit code words to the original words (2's complement!)
+                            r += self._complement((pixels >> ETC_RED2_OFFSET) & 0x07, 3)
+                            g += self._complement((pixels >> ETC_GREEN2_OFFSET) & 0x07, 3)
+                            b += self._complement((pixels >> ETC_BLUE2_OFFSET) & 0x07, 3)
+
+                            # extend from 5 to 8 bits like before
+                            color2[0] = (r << 3) | ((r >> 2) & 0x07)
+                            color2[1] = (g << 3) | ((g >> 2) & 0x07)
+                            color2[2] = (b << 3) | ((b >> 2) & 0x07)
+                        else:
+                            # 4 bits per channel, 16 possible values
+
+                            # 1st block
+                            color1[0] = ((pixels >> ETC_INDIV_RED1_OFFSET) & 0x0F) * 0x11
+                            color1[1] = ((pixels >> ETC_INDIV_GREEN1_OFFSET) & 0x0F) * 0x11
+                            color1[2] = ((pixels >> ETC_INDIV_BLUE1_OFFSET) & 0x0F) * 0x11
+
+                            # 2nd block
+                            color2[0] = ((pixels >> ETC_RED2_OFFSET) & 0x0F) * 0x11
+                            color2[1] = ((pixels >> ETC_GREEN2_OFFSET) & 0x0F) * 0x11
+                            color2[2] = ((pixels >> ETC_BLUE2_OFFSET) & 0x0F) * 0x11
+
+                        # now that we have two sub block pixel colors to start from,
+                        # each pixel is read as a modifier value
+
+                        # 16 pixels are described with 2 bits each,
+                        # one selecting the sign, the second the value
+
+                        amounts = pixels & 0xFFFF
+                        signs = (pixels >> 16) & 0xFFFF
+
+                        for pixel_y in range(4):
+                            for pixel_x in range(4):
+                                x = pixel_x + (block_x * 4) + (tile_x * 8)
+                                y = pixel_y + (block_y * 4) + (tile_y * 8)
+
+                                if x >= width:
+                                    continue
+                                if y >= height:
+                                    continue
+
+                                offset = pixel_x * 4 + pixel_y
+
+                                if horizontal:
+                                    table = table1 if pixel_y < 2 else table2
+                                    color = color1 if pixel_y < 2 else color2
+                                else:
+                                    table = table1 if pixel_x < 2 else table2
+                                    color = color1 if pixel_x < 2 else color2
+
+                                # determine the amount to shift the color
+                                amount = table[(amounts >> offset) & 0x01]
+                                # and in which direction. 1 = -, 0 = +
+                                sign = (signs >> offset) & 0x01
+
+                                if sign == 1:
+                                    amount *= -1
+
+                                red = max(min(color[0] + amount, 0xFF), 0)
+                                green = max(min(color[1] + amount, 0xFF), 0)
+                                blue = max(min(color[2] + amount, 0xFF), 0)
+                                alpha = ((alphas >> (offset * 4)) & 0x0F) * 0x11
+
+                                pixel_pos = y * width + x
+
+                                bmp[pixel_pos] = [red, green, blue, alpha]
+        return bmp
+
+    def _complement(self, input_, bits):
+        if input_ >> (bits - 1) == 0:
+            return input_
+        return input_ - (1 << bits)
 
     def _sheet_to_bitmap(self, data, to_tglp=False):
         width = self.tglp['sheet']['width']
         height = self.tglp['sheet']['height']
-        format = self.tglp['sheet']['format']
+        format_ = self.tglp['sheet']['format']
 
         data_width = width
         data_height = height
@@ -680,35 +850,35 @@ class Bffnt:
                                         if to_tglp:
                                             # OR the data since there are pixel formats which use the same byte for
                                             # multiple pixels (A4/L4)
-                                            bytes = self._get_tglp_pixel_data(bmp, format, bmp_pos)
-                                            if len(bytes) > 1:
-                                                data[data_pos:data_pos + len(bytes)] = bytes
+                                            bytes_ = self._get_tglp_pixel_data(bmp, format_, bmp_pos)
+                                            if len(bytes_) > 1:
+                                                data[data_pos:data_pos + len(bytes_)] = bytes_
                                             else:
-                                                if PIXEL_FORMAT_SIZE[format] == 4:
+                                                if PIXEL_FORMAT_SIZE[format_] == 4:
                                                     data_pos /= 2
-                                                data[data_pos] |= bytes[0]
+                                                data[data_pos] |= bytes_[0]
                                         else:
-                                            bmp[bmp_pos] = self._get_pixel_data(data, format, data_pos)
+                                            bmp[bmp_pos] = self._get_pixel_data(data, format_, data_pos)
 
         if to_tglp:
             return struct.pack('%dB' % len(data), *data)
         else:
-            return width, height, bmp
+            return bmp
 
-    def _get_pixel_data(self, data, format, index):
+    def _get_pixel_data(self, data, format_, index):
         red = green = blue = alpha = 0
 
         # rrrrrrrr gggggggg bbbbbbbb aaaaaaaa
-        if format == FORMAT_RGBA8:
+        if format_ == FORMAT_RGBA8:
             red, green, blue, alpha = struct.unpack('4B', data[index * 4:index * 4 + 4])
 
         # rrrrrrrr gggggggg bbbbbbbb
-        elif format == FORMAT_RGB8:
+        elif format_ == FORMAT_RGB8:
             red, green, blue = struct.unpack('3B', data[index * 3:index * 3 + 3])
             alpha = 255
 
         # rrrrrgg gggbbbbba
-        elif format == FORMAT_RGBA5551:
+        elif format_ == FORMAT_RGBA5551:
             b1, b2 = struct.unpack('2B', data[index * 2:index * 2 + 2])
 
             red = ((b1 >> 3) & 0x1F)
@@ -717,7 +887,7 @@ class Bffnt:
             alpha = (b2 & 0x01) * 255
 
         # rrrrrggg gggbbbbb
-        elif format == FORMAT_RGB565:
+        elif format_ == FORMAT_RGB565:
             b1, b2 = struct.unpack('2B', data[index * 2:index * 2 + 2])
 
             red = (b1 >> 3) & 0x1F
@@ -726,7 +896,7 @@ class Bffnt:
             alpha = 255
 
         # rrrrgggg bbbbaaaa
-        elif format == FORMAT_RGBA4:
+        elif format_ == FORMAT_RGBA4:
             b1, b2 = struct.unpack('2B', data[index * 2:index * 2 + 2])
 
             red = ((b1 >> 4) & 0x0F) * 0x11
@@ -735,70 +905,60 @@ class Bffnt:
             alpha = (b2 & 0x0F) * 0x11
 
         # llllllll aaaaaaaa
-        elif format == FORMAT_LA8:
+        elif format_ == FORMAT_LA8:
             l, alpha = struct.unpack('2B', data[index * 2:index * 2 + 2])
             red = green = blue = l
 
         # ??
-        elif format == FORMAT_HILO8:
+        elif format_ == FORMAT_HILO8:
             # TODO
             pass
 
         # llllllll
-        elif format == FORMAT_L8:
+        elif format_ == FORMAT_L8:
             red = green = blue = struct.unpack('B', data[index:index + 1])[0]
             alpha = 255
 
         # aaaaaaaa
-        elif format == FORMAT_A8:
+        elif format_ == FORMAT_A8:
             alpha = struct.unpack('B', data[index:index + 1])[0]
             red = green = blue = 255
 
         # llllaaaa
-        elif format == FORMAT_LA4:
+        elif format_ == FORMAT_LA4:
             la = struct.unpack('B', data[index:index + 1])[0]
             red = green = blue = ((la >> 4) & 0x0F) * 0x11
             alpha = (la & 0x0F) * 0x11
 
         # llll
-        elif format == FORMAT_L4:
+        elif format_ == FORMAT_L4:
             l = struct.unpack('B', data[index / 2])[0]
             shift = (index & 1) * 4
             red = green = blue = ((l >> shift) & 0x0F) * 0x11
             alpha = 255
 
         # aaaa
-        elif format == FORMAT_A4:
+        elif format_ == FORMAT_A4:
             byte = ord(data[index / 2])
             shift = (index & 1) * 4
             alpha = ((byte >> shift) & 0x0F) * 0x11
             green = red = blue = 0xFF
 
-        # compressed
-        elif format == FORMAT_ETC1:
-            # TODO
-            pass
+        return red, green, blue, alpha
 
-        # compress w/alpha
-        elif format == FORMAT_ETC1A4:
-            # TODO
-            pass
-
-        return (red, green, blue, alpha)
-
-    def _get_tglp_pixel_data(self, bmp, format, index):
+    def _get_tglp_pixel_data(self, bmp, format_, index):
         # bmp data: tuple (r, g, b, a)
         # output: list of bytes: [255, 255]
         red, green, blue, alpha = bmp[index]
 
-        if format == FORMAT_RGBA8:
+        if format_ == FORMAT_RGBA8:
             return [red, green, blue, alpha]
 
-        elif format == FORMAT_RGB8:
+        elif format_ == FORMAT_RGB8:
             return [red, green, blue]
 
         # rrrrrggg ggbbbbba
-        elif format == FORMAT_RGBA5551:
+        elif format_ == FORMAT_RGBA5551:
             r5 = (red / 8) & 0x1F
             g5 = (green / 8) & 0x1F
             b5 = (blue / 8) & 0x1F
@@ -809,7 +969,7 @@ class Bffnt:
             return [b1, b2]
 
         # rrrrrggg gggbbbbb
-        elif format == FORMAT_RGB565:
+        elif format_ == FORMAT_RGB565:
             r5 = (red / 8) & 0x1F
             g6 = (green / 4) & 0x3F
             b5 = (blue / 8) & 0x1F
@@ -819,7 +979,7 @@ class Bffnt:
             return [b1, b2]
 
         # rrrrgggg bbbbaaaa
-        elif format == FORMAT_RGBA4:
+        elif format_ == FORMAT_RGBA4:
             r4 = (red / 0x11) & 0x0F
             g4 = (green / 0x11) & 0x0F
             b4 = (blue / 0x11) & 0x0F
@@ -830,27 +990,27 @@ class Bffnt:
             return [b1, b2]
 
         # llllllll aaaaaaaa
-        elif format == FORMAT_LA8:
+        elif format_ == FORMAT_LA8:
             l = int((red * 0.2126) + (green * 0.7152) + (blue * 0.0722))
 
             return [l, alpha]
 
-        elif format == FORMAT_HILO8:
+        elif format_ == FORMAT_HILO8:
             # TODO
             pass
 
         # llllllll
-        elif format == FORMAT_L8:
+        elif format_ == FORMAT_L8:
             l = int((red * 0.2126) + (green * 0.7152) + (blue * 0.0722))
 
             return [l]
 
         # aaaaaaaa
-        elif format == FORMAT_A8:
+        elif format_ == FORMAT_A8:
             return [alpha]
 
         # llllaaaa
-        elif format == FORMAT_LA4:
+        elif format_ == FORMAT_LA4:
             l = int((red * 0.2126) + (green * 0.7152) + (blue * 0.0722)) / 0x11
             a = (alpha / 0x11) & 0x0F
 
@@ -858,24 +1018,16 @@ class Bffnt:
             return [b]
 
         # llll
-        elif format == FORMAT_L4:
+        elif format_ == FORMAT_L4:
             l = int((red * 0.2126) + (green * 0.7152) + (blue * 0.0722))
             shift = (index & 1) * 4
             return [l << shift]
 
         # aaaa
-        elif format == FORMAT_A4:
+        elif format_ == FORMAT_A4:
             alpha = (bmp[index][3] / 0x11) & 0xF
             shift = (index & 1) * 4
             return [alpha << shift]
-
-        elif format == FORMAT_ETC1:
-            # TODO
-            pass
-
-        elif format == FORMAT_ETC1A4:
-            # TODO
-            pass
 
     def _parse_cwdh_header(self, data):
         magic, section_size, start_index, end_index, next_cwdh_offset \
@@ -942,11 +1094,11 @@ class Bffnt:
         return next_cmap_offset
 
     def _parse_cmap_data(self, info, data):
-        type = info['type']
-        if type == MAPPING_DIRECT:
+        type_ = info['type']
+        if type_ == MAPPING_DIRECT:
             info['indexOffset'] = struct.unpack('%sH' % self.order, data[:2])[0]
 
-        elif type == MAPPING_TABLE:
+        elif type_ == MAPPING_TABLE:
             count = info['end'] - info['start'] + 1
             position = 0
             output = []
@@ -956,7 +1108,7 @@ class Bffnt:
                 output.append(offset)
             info['indexTable'] = output
 
-        elif type == MAPPING_SCAN:
+        elif type_ == MAPPING_SCAN:
             position = 0
             count = struct.unpack('%sH' % self.order, data[position:position + 2])[0]
             position += 2
@@ -969,17 +1121,17 @@ class Bffnt:
 
 
 def prompt_yes_no(prompt):
-    answer = None
-    while answer not in ('y', 'n'):
-        if answer is not None:
+    answer_ = None
+    while answer_ not in ('y', 'n'):
+        if answer_ is not None:
             print('Please answer "y" or "n"')
 
-        answer = raw_input(prompt).lower()
+        answer_ = raw_input(prompt).lower()
 
-        if len(answer) == 0:
-            answer = 'n'
+        if len(answer_) == 0:
+            answer_ = 'n'
 
-    return answer
+    return answer_
 
 
 if __name__ == '__main__':

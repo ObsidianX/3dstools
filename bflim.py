@@ -2,11 +2,18 @@
 
 import argparse
 import math
+import numpy
 import os.path
 import struct
 import sys
 
 import png
+
+try:
+    # noinspection PyUnresolvedReferences
+    import cv2
+except ImportError:
+    pass
 
 FLIM_HEADER_SIZE = 0x14
 IMAG_HEADER_SIZE = 0x14
@@ -118,12 +125,18 @@ class Bflim:
     data_size = 0
     invalid = False
     order = None
+    bmp = []
+    filename = ''
+    file_size = 0
+    imag = {}
 
     def __init__(self, verbose=False, debug=False, big_endian=False, swizzle=SWIZZLE_NONE):
         self.verbose = verbose
         self.debug = debug
         self.big_endian = big_endian
         self.swizzle = swizzle
+
+        self.has_cv = 'cv2' in globals()
 
     def read(self, filename, parse_image=True):
         self.filename = filename
@@ -145,8 +158,8 @@ class Bflim:
 
         if parse_image:
             bmp_data = data[:self.data_size]
-            format = self.imag['format']
-            if format == FORMAT_ETC1 or format == FORMAT_ETC1_2 or format == FORMAT_ETC1A4:
+            format_ = self.imag['format']
+            if format_ == FORMAT_ETC1 or format_ == FORMAT_ETC1_2 or format_ == FORMAT_ETC1A4:
                 self.bmp = self._decompress_etc1(bmp_data)
             else:
                 self.bmp = self._data_to_bitmap(bmp_data)
@@ -155,22 +168,59 @@ class Bflim:
         width = self.imag['width']
         height = self.imag['height']
 
-        # TODO: Apply transformation matrix to undo Swizzle
-
         png_data = []
         for y in range(height):
             row = []
             for x in range(width):
                 for color in self.bmp[x + (y * width)]:
                     row.append(int(color))
-
             png_data.append(row)
 
         basename = os.path.splitext(os.path.basename(self.filename))[0]
-        file = open('%s.png' % basename, 'wb')
+        filename = '%s.png' % basename
+        file_ = open(filename, 'wb')
         writer = png.Writer(width, height, alpha=True)
-        writer.write(file, png_data)
-        file.close()
+        writer.write(file_, png_data)
+        file_.close()
+
+        if self.has_cv:
+            img = cv2.imread(filename, -1)
+
+            swizzle = self.imag['swizzle']
+            if swizzle == SWIZZLE_ROT_90:
+                img = self._rotate_image(img, 90, width, height)
+            elif swizzle == SWIZZLE_TRANSPOSE:
+                # the lazy transpose... rotate and flip one axis
+                img = self._rotate_image(img, 90, width, height)
+                cv2.flip(img, 0, dst=img)
+            cv2.imwrite(filename, img)
+
+    # OpenCV doesn't resize around the center when rotating (since it's just working with matrices)
+    # so we need to do some lame canvas work to ensure a clean rotation + resize around the center
+    # note: I'm sure there's some better way of picking the correct rotation center to rotate the
+    #       original into the new position, I'm just too lazy to figure it out right now
+    def _rotate_image(self, mat, angle, width, height):
+        big = max(width, height)
+        small = min(width, height)
+        center = (big / 2.0) - (small / 2.0)
+
+        trans = numpy.float32([[1, 0, 0], [0, 1, 0]])
+        trans2 = numpy.float32([[1, 0, 0], [0, 1, 0]])
+
+        if small == width:
+            trans[0, 2] = center
+            trans2[1, 2] = -center - 1
+        else:
+            trans[1, 2] = center
+            trans2[0, 2] = -center - 1
+
+        # first enlarge the image to a square, translating the pixels to the new center
+        mat = cv2.warpAffine(mat, trans, (big, big))
+        # then rotate on the new center
+        rot = cv2.getRotationMatrix2D((big / 2, big / 2), angle, 1)
+        mat = cv2.warpAffine(mat, rot, (big, big))
+        # finally translate back to the start and resize to the new size
+        return cv2.warpAffine(mat, trans2, (height, width))
 
     def load(self, filename):
         png_file = open(filename, 'rb')
@@ -195,30 +245,30 @@ class Bflim:
         png_file.close()
 
     def save(self, output_filename):
-        file = open(output_filename, 'wb')
+        file_ = open(output_filename, 'wb')
 
-        file.write(self.bmp)
+        file_.write(self.bmp)
 
         if self.big_endian:
             bom = 0xFFFE
         else:
             bom = 0xFEFF
 
-        size_offset = file.tell() + 0x0C
+        size_offset = file_.tell() + 0x0C
         flim_header = struct.pack(FLIM_HEADER_STRUCT, FLIM_HEADER_MAGIC, bom, FLIM_HEADER_SIZE, FLIM_UNKNOWN1, 0,
                                   FLIM_UNKNOWN2, FLIM_MULTIPLIER, FLIM_UNKNOWN3)
-        file.write(flim_header)
+        file_.write(flim_header)
 
         imag_header = struct.pack(IMAG_HEADER_STRUCT % self.order, IMAG_HEADER_MAGIC, IMAG_PARSE_SIZE,
                                   self.imag['height'], self.imag['width'], IMAG_ALIGNMENT, self.imag['format'],
                                   self.swizzle, len(self.bmp))
-        file.write(imag_header)
+        file_.write(imag_header)
 
-        size = file.tell()
-        file.seek(size_offset)
-        file.write(struct.pack('%sI' % self.order, size))
+        size = file_.tell()
+        file_.seek(size_offset)
+        file_.write(struct.pack('%sI' % self.order, size))
 
-        file.close()
+        file_.close()
 
         print('All done!')
 
@@ -266,7 +316,7 @@ class Bflim:
             print('FLIM Unknown3: 0x%x\n' % unknown3)
 
     def _parse_imag_header(self, data):
-        magic, parse_size, height, width, alignment, format, swizzle, data_size \
+        magic, parse_size, height, width, alignment, format_, swizzle, data_size \
             = struct.unpack(IMAG_HEADER_STRUCT % self.order, data)
 
         if magic != IMAG_HEADER_MAGIC:
@@ -281,7 +331,7 @@ class Bflim:
             'width': width,
             'height': height,
             'alignment': alignment,
-            'format': format,
+            'format': format_,
             'swizzle': swizzle
         }
 
@@ -425,15 +475,15 @@ class Bflim:
                                 bmp[pixel_pos] = [red, green, blue, alpha]
         return bmp
 
-    def _complement(self, input, bits):
-        if input >> (bits - 1) == 0:
-            return input
-        return input - (1 << bits)
+    def _complement(self, input_, bits):
+        if input_ >> (bits - 1) == 0:
+            return input_
+        return input_ - (1 << bits)
 
     def _data_to_bitmap(self, data, to_bin=False, exact=True):
         width = self.imag['width']
         height = self.imag['height']
-        format = self.imag['format']
+        format_ = self.imag['format']
 
         data_width = width
         data_height = height
@@ -487,29 +537,29 @@ class Bflim:
                                         if to_bin:
                                             # OR the data since there are pixel formats which use the same byte for
                                             # multiple pixels (A4/L4)
-                                            bytes = self._get_pixel_data(bmp, format, bmp_pos)
+                                            bytes_ = self._get_pixel_data(bmp, format_, bmp_pos)
                                             if not self.big_endian:
-                                                bytes.reverse()
-                                            byte_len = len(bytes)
+                                                bytes_.reverse()
+                                            byte_len = len(bytes_)
                                             if byte_len > 1:
-                                                data[data_pos * byte_len:data_pos * byte_len + byte_len] = bytes
+                                                data[data_pos * byte_len:data_pos * byte_len + byte_len] = bytes_
                                             else:
-                                                if PIXEL_FORMAT_SIZE[format] == 4:
+                                                if PIXEL_FORMAT_SIZE[format_] == 4:
                                                     data_pos /= 2
-                                                data[data_pos] |= bytes[0]
+                                                data[data_pos] |= bytes_[0]
                                         else:
-                                            bmp[bmp_pos] = self._get_bmp_pixel_data(data, format, data_pos)
+                                            bmp[bmp_pos] = self._get_bmp_pixel_data(data, format_, data_pos)
 
         if to_bin:
             return struct.pack('%dB' % len(data), *data)
         else:
             return bmp
 
-    def _get_bmp_pixel_data(self, data, format, index):
+    def _get_bmp_pixel_data(self, data, format_, index):
         red = green = blue = alpha = 0
 
         # rrrrrrrr gggggggg bbbbbbbb aaaaaaaa
-        if format == FORMAT_RGBA8:
+        if format_ == FORMAT_RGBA8:
             color = struct.unpack('%sI' % self.order, data[index * 4:index * 4 + 4])[0]
             red = (color >> 24) & 0xFF
             green = (color >> 16) & 0xFF
@@ -517,12 +567,12 @@ class Bflim:
             alpha = color & 0xFF
 
         # rrrrrrrr gggggggg bbbbbbbb
-        elif format == FORMAT_RGB8:
+        elif format_ == FORMAT_RGB8:
             red, green, blue = struct.unpack('3B', data[index * 3:index * 3 + 3])
             alpha = 255
 
         # rrrrrgg gggbbbbba
-        elif format == FORMAT_RGBA5551:
+        elif format_ == FORMAT_RGBA5551:
             b1, b2 = struct.unpack('2B', data[index * 2:index * 2 + 2])
 
             red = ((b1 >> 3) & 0x1F)
@@ -531,7 +581,7 @@ class Bflim:
             alpha = (b2 & 0x01) * 255
 
         # rrrrrggg gggbbbbb
-        elif format == FORMAT_RGB565:
+        elif format_ == FORMAT_RGB565:
             b1, b2 = struct.unpack('2B', data[index * 2:index * 2 + 2])
 
             red = (b1 >> 3) & 0x1F
@@ -540,7 +590,7 @@ class Bflim:
             alpha = 255
 
         # rrrrgggg bbbbaaaa
-        elif format == FORMAT_RGBA4:
+        elif format_ == FORMAT_RGBA4:
             b1, b2 = struct.unpack('2B', data[index * 2:index * 2 + 2])
 
             red = ((b1 >> 4) & 0x0F) * 0x11
@@ -549,60 +599,60 @@ class Bflim:
             alpha = (b2 & 0x0F) * 0x11
 
         # llllllll aaaaaaaa
-        elif format == FORMAT_LA8:
+        elif format_ == FORMAT_LA8:
             l, alpha = struct.unpack('2B', data[index * 2:index * 2 + 2])
             red = green = blue = l
 
         # ??
-        elif format == FORMAT_HILO8:
+        elif format_ == FORMAT_HILO8:
             # TODO
             pass
 
         # llllllll
-        elif format == FORMAT_L8:
+        elif format_ == FORMAT_L8:
             red = green = blue = struct.unpack('B', data[index:index + 1])[0]
             alpha = 255
 
         # aaaaaaaa
-        elif format == FORMAT_A8:
+        elif format_ == FORMAT_A8:
             alpha = struct.unpack('B', data[index:index + 1])[0]
             red = green = blue = 255
 
         # llllaaaa
-        elif format == FORMAT_LA4:
+        elif format_ == FORMAT_LA4:
             la = struct.unpack('B', data[index:index + 1])[0]
             red = green = blue = ((la >> 4) & 0x0F) * 0x11
             alpha = (la & 0x0F) * 0x11
 
         # llll
-        elif format == FORMAT_L4:
+        elif format_ == FORMAT_L4:
             l = struct.unpack('B', data[index / 2])[0]
             shift = (index & 1) * 4
             red = green = blue = ((l >> shift) & 0x0F) * 0x11
             alpha = 255
 
         # aaaa
-        elif format == FORMAT_A4:
+        elif format_ == FORMAT_A4:
             byte = ord(data[index / 2])
             shift = (index & 1) * 4
             alpha = ((byte >> shift) & 0x0F) * 0x11
             green = red = blue = 0xFF
 
-        return (red, green, blue, alpha)
+        return red, green, blue, alpha
 
-    def _get_pixel_data(self, bmp, format, index):
+    def _get_pixel_data(self, bmp, format_, index):
         # bmp data: tuple (r, g, b, a)
         # output: list of bytes: [255, 255]
         red, green, blue, alpha = bmp[index]
 
-        if format == FORMAT_RGBA8:
+        if format_ == FORMAT_RGBA8:
             return [red, green, blue, alpha]
 
-        elif format == FORMAT_RGB8:
+        elif format_ == FORMAT_RGB8:
             return [red, green, blue]
 
         # rrrrrggg ggbbbbba
-        elif format == FORMAT_RGBA5551:
+        elif format_ == FORMAT_RGBA5551:
             r5 = (red / 8) & 0x1F
             g5 = (green / 8) & 0x1F
             b5 = (blue / 8) & 0x1F
@@ -613,7 +663,7 @@ class Bflim:
             return [b1, b2]
 
         # rrrrrggg gggbbbbb
-        elif format == FORMAT_RGB565:
+        elif format_ == FORMAT_RGB565:
             r5 = (red / 8) & 0x1F
             g6 = (green / 4) & 0x3F
             b5 = (blue / 8) & 0x1F
@@ -623,7 +673,7 @@ class Bflim:
             return [b1, b2]
 
         # rrrrgggg bbbbaaaa
-        elif format == FORMAT_RGBA4:
+        elif format_ == FORMAT_RGBA4:
             r4 = (red / 0x11) & 0x0F
             g4 = (green / 0x11) & 0x0F
             b4 = (blue / 0x11) & 0x0F
@@ -634,27 +684,27 @@ class Bflim:
             return [b1, b2]
 
         # llllllll aaaaaaaa
-        elif format == FORMAT_LA8:
+        elif format_ == FORMAT_LA8:
             l = int((red * 0.2126) + (green * 0.7152) + (blue * 0.0722))
 
             return [l, alpha]
 
-        elif format == FORMAT_HILO8:
+        elif format_ == FORMAT_HILO8:
             # TODO
             pass
 
         # llllllll
-        elif format == FORMAT_L8:
+        elif format_ == FORMAT_L8:
             l = int((red * 0.2126) + (green * 0.7152) + (blue * 0.0722))
 
             return [l]
 
         # aaaaaaaa
-        elif format == FORMAT_A8:
+        elif format_ == FORMAT_A8:
             return [alpha]
 
         # llllaaaa
-        elif format == FORMAT_LA4:
+        elif format_ == FORMAT_LA4:
             l = int((red * 0.2126) + (green * 0.7152) + (blue * 0.0722)) / 0x11
             a = (alpha / 0x11) & 0x0F
 
@@ -662,24 +712,16 @@ class Bflim:
             return [b]
 
         # llll
-        elif format == FORMAT_L4:
+        elif format_ == FORMAT_L4:
             l = int((red * 0.2126) + (green * 0.7152) + (blue * 0.0722))
             shift = (index & 1) * 4
             return [l << shift]
 
         # aaaa
-        elif format == FORMAT_A4:
+        elif format_ == FORMAT_A4:
             alpha = (bmp[index][3] / 0x11) & 0xF
             shift = (index & 1) * 4
             return [alpha << shift]
-
-        elif format == FORMAT_ETC1:
-            # TODO
-            pass
-
-        elif format == FORMAT_ETC1A4:
-            # TODO
-            pass
 
 
 if __name__ == '__main__':
@@ -693,7 +735,9 @@ if __name__ == '__main__':
                        action='store_true', default=True)
     group.add_argument('-b', '--big-endian', help='use Big Endian when reading/writing', action='store_true',
                        default=False)
-    parser.add_argument('-s', '--swizzle', help='set the swizzle type of the output BFLIM (default: 0)\n0 - none; 4 - rotate 90deg; 8 - transpose',
+    parser.add_argument('-s', '--swizzle',
+                        help='set the swizzle type of the output BFLIM (default: 0)\n'
+                             '0 - none; 4 - rotate 90 degrees; 8 - transpose',
                         type=int, choices=SWIZZLES.keys(), default=SWIZZLE_NONE)
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('-c', '--create', metavar='png', help='create BFLIM file from PNG', default=False)

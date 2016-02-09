@@ -32,11 +32,17 @@ ENCODINGS = {
     ENCODING_UTF16: "UTF-16"
 }
 
+
 class Msbt:
     order = None
     invalid = False
+    filename = ''
+    file_size = 0
+    header_unknowns = []
     sections = {}
     section_order = []
+    section_count = 0
+    encoding = ENCODING_UTF16
 
     def __init__(self, verbose=False, debug=False, colors=False):
         self.verbose = verbose
@@ -84,7 +90,7 @@ class Msbt:
 
             # TODO:
             # elif magic == NLI1_MAGIC:
-            
+
             else:
                 position += struct.unpack('%sI' % self.order, data[position + 4:position + 8])[0]
                 position += TXT2_HEADER_LEN
@@ -121,8 +127,8 @@ class Msbt:
             print('MSBT File size: (unknown)')
             print('MSBT Unknown4: 0x%s\n' % self.header_unknowns[3].encode('hex'))
 
-        msbt_header = struct.pack(MSBT_HEADER_STRUCT, MSBT_MAGIC, bom, self.header_unknowns[0], self.encoding, 
-                                  self.header_unknowns[1], self.section_count, self.header_unknowns[2], 
+        msbt_header = struct.pack(MSBT_HEADER_STRUCT, MSBT_MAGIC, bom, self.header_unknowns[0], self.encoding,
+                                  self.header_unknowns[1], self.section_count, self.header_unknowns[2],
                                   0, str(self.header_unknowns[3]))
         output.write(msbt_header)
 
@@ -158,9 +164,9 @@ class Msbt:
         label_lists = self.sections['LBL1']['data']
         for label_list in label_lists:
             for label in label_list[0]:
-                id = label[0]
+                id_ = label[0]
                 name = label[1]
-                value = self.sections['TXT2']['data'][id]
+                value = self.sections['TXT2']['data'][id_]
                 output['strings'][name] = value
 
         output['structure']['MSBT'] = {
@@ -219,15 +225,15 @@ class Msbt:
         label_lists = self.sections['LBL1']['data']
         for label_list in label_lists:
             for label in label_list[0]:
-                id = label[0]
+                id_ = label[0]
                 name = label[1]
                 value = strings[name]
 
-                self.sections['TXT2']['data'][id] = value
+                self.sections['TXT2']['data'][id_] = value
 
     def _parse_header(self, data):
-        magic, bom, unknown1, encoding, unknown2, sections, unknown3, file_size, unknown4 = struct.unpack(MSBT_HEADER_STRUCT,
-                                                                                                data)
+        magic, bom, unknown1, encoding, unknown2, sections, unknown3, file_size, unknown4 = struct.unpack(
+                MSBT_HEADER_STRUCT, data)
 
         if magic != MSBT_MAGIC:
             print('Invalid header magic bytes: %s (expected %s)' % (magic, MSBT_MAGIC))
@@ -321,12 +327,12 @@ class Msbt:
                 name_end = offset + length + 1
                 name = data[offset + 1:name_end]
                 id_offset = name_end
-                id = struct.unpack('%sI' % self.order, data[id_offset:id_offset + 4])[0]
-                list_.append((id, name))
+                id_ = struct.unpack('%sI' % self.order, data[id_offset:id_offset + 4])[0]
+                list_.append((id_, name))
                 offset = id_offset + 4
 
                 if self.debug:
-                    print('  %d: %s' % (id, name))
+                    print('  %d: %s' % (id_, name))
 
             lists.append((list_, offset))
 
@@ -399,7 +405,6 @@ class Msbt:
             end = (i + 1) * 4
             offsets.append(struct.unpack('%sI' % self.order, data[start:end])[0] - 4)
 
-        index = 0
         for i in range(entries):
             start = offsets[i]
             if i < entries - 1:
@@ -516,15 +521,16 @@ class Msbt:
                     utf16string = ''
 
                     while matcher is not None:
-                        matcher = re.search('(?P<pre>.*)\\[#(?P<color>[a-fA-F0-9]{8})\\](?P<post>.*)', haystack, re.DOTALL)
+                        matcher = re.search('(?P<pre>.*)\\[#(?P<color>[a-fA-F0-9]{8})\\](?P<post>.*)', haystack,
+                                            re.DOTALL)
 
                         if matcher is not None:
                             pre = matcher.group('pre')
                             color = matcher.group('color')
-                            colorValue = int(color, 16)
+                            color_value = int(color, 16)
                             post = matcher.group('post')
                             utf16string += pre.encode('utf-16%s' % order)
-                            utf16string += struct.pack('%sI' % self.order, colorValue)
+                            utf16string += struct.pack('%sI' % self.order, color_value)
                             haystack = post
                         else:
                             utf16string += haystack.encode('utf-16%s' % order)
@@ -546,17 +552,17 @@ class Msbt:
 
 
 def prompt_yes_no(prompt):
-    answer = None
-    while answer not in ('y', 'n'):
-        if answer is not None:
+    answer_ = None
+    while answer_ not in ('y', 'n'):
+        if answer_ is not None:
             print('Please answer "y" or "n"')
 
-        answer = raw_input(prompt).lower()
+        answer_ = raw_input(prompt).lower()
 
-        if len(answer) == 0:
-            answer = 'n'
+        if len(answer_) == 0:
+            answer_ = 'n'
 
-    return answer
+    return answer_
 
 
 if __name__ == '__main__':
