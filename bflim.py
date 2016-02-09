@@ -162,7 +162,7 @@ class Bflim:
             if format_ == FORMAT_ETC1 or format_ == FORMAT_ETC1_2 or format_ == FORMAT_ETC1A4:
                 self.bmp = self._decompress_etc1(bmp_data)
             else:
-                self.bmp = self._data_to_bitmap(bmp_data)
+                self.bmp = self._parse_image_data(bmp_data)
 
     def extract(self):
         width = self.imag['width']
@@ -238,7 +238,7 @@ class Bflim:
 
         self.order = '>' if self.big_endian else '<'
 
-        self.bmp = self._data_to_bitmap(bmp, to_bin=True)
+        self.bmp = self._parse_image_data(bmp, to_bin=True, exact=False)
 
         png_file.close()
 
@@ -478,7 +478,7 @@ class Bflim:
             return input_
         return input_ - (1 << bits)
 
-    def _data_to_bitmap(self, data, to_bin=False, exact=True):
+    def _parse_image_data(self, data, to_bin=False, exact=True):
         width = self.imag['width']
         height = self.imag['height']
         format_ = self.imag['format']
@@ -486,20 +486,39 @@ class Bflim:
         data_width = width
         data_height = height
 
+        # increase the output image size to show the empty padding
         if not exact:
             # increase the size of the image to a power-of-two boundary, if necessary
             width = 1 << int(math.ceil(math.log(width, 2)))
             height = 1 << int(math.ceil(math.log(height, 2)))
 
+            if self.debug and width != data_width or height != data_height:
+                print('Expanding output size: %dx%d' % (width, height))
+
+        # textures are stored as power-of-two images
+        if not to_bin and (data_width * data_height * (PIXEL_FORMAT_SIZE[format_] / 8.0)) < len(data):
+            data_width = 1 << int(math.ceil(math.log(data_width, 2)))
+            data_height = 1 << int(math.ceil(math.log(data_height, 2)))
+
+            if self.debug:
+                print('Expanding input size: %dx%d' % (data_width, data_height))
+
         if to_bin:
-            bmp = data
-            data = [0] * int(self.imag['width'] * self.imag['height'] * (PIXEL_FORMAT_SIZE[self.imag['format']] / 8.0))
+            # initialize binary data memory
+            output = [0] * int(width * height * (PIXEL_FORMAT_SIZE[format_] / 8.0))
+            if self.debug:
+                print('RGBA -> Binary')
         else:
             # initialize empty bitmap memory (RGBA8)
-            bmp = [[0, 0, 0, 0]] * (width * height)
+            output = [[0, 0, 0, 0]] * (width * height)
+            if self.debug:
+                print('Binary -> RGBA')
 
-        tile_width = width / 8
-        tile_height = height / 8
+        tile_width = int(math.ceil(width / 8.0))
+        tile_height = int(math.ceil(height / 8.0))
+
+        if self.debug:
+            print('Tiles: %dx%d' % (tile_width, tile_height))
 
         # texture is composed of 8x8 pixel tiles
         for tile_y in range(tile_height):
@@ -520,40 +539,58 @@ class Bflim:
                                         pixel_y = (y3 + (y2 * 2) + (y * 4) + (tile_y * 8))
 
                                         # if the final y value is beyond the input data's height then don't read it
-                                        if pixel_y >= data_height:
+                                        if pixel_y >= data_height or pixel_y >= height:
                                             continue
                                         # same for the x and the input data width
-                                        if pixel_x >= data_width:
+                                        if pixel_x >= data_width or pixel_x >= width:
                                             continue
 
-                                        data_x = (x3 + (x2 * 4) + (x * 16) + (tile_x * 64))
-                                        data_y = ((y3 * 2) + (y2 * 8) + (y * 32) + (tile_y * width * 8))
-
-                                        data_pos = data_x + data_y
-                                        bmp_pos = pixel_x + (pixel_y * width)
-
                                         if to_bin:
-                                            # OR the data since there are pixel formats which use the same byte for
-                                            # multiple pixels (A4/L4)
-                                            bytes_ = self._get_pixel_data(bmp, format_, bmp_pos)
+                                            # data consists of (r, g, b, a) elements
+                                            pix_pos = pixel_x + pixel_y * data_width
+                                            data_x = (x3 + (x2 * 4) + (x * 16) + (tile_x * 64))
+                                            data_y = ((y3 * 2) + (y2 * 8) + (y * 32) + (tile_y * width * 8))
+                                            data_pos = data_x + data_y
+                                            pixel_data = data[pixel_x + pixel_y * data_width]
+
+                                            # output is array of bytes
+                                            pixel = self._get_binary_pixel(pixel_data, format_, pix_pos)
+                                            byte_len = len(pixel)
+
+                                            # adjust for half-byte formats
+                                            if PIXEL_FORMAT_SIZE[format_] == 4:
+                                                data_pos /= 2
+                                            start = data_pos * byte_len
+                                            end = start + byte_len
+
+                                            # ensure endianness
                                             if not self.big_endian:
-                                                bytes_.reverse()
-                                            byte_len = len(bytes_)
-                                            if byte_len > 1:
-                                                data[data_pos * byte_len:data_pos * byte_len + byte_len] = bytes_
+                                                pixel.reverse()
+
+                                            # OR single-byte formats in case they're half-byte formats
+                                            if byte_len == 1:
+                                                output[start] |= pixel
                                             else:
-                                                if PIXEL_FORMAT_SIZE[format_] == 4:
-                                                    data_pos /= 2
-                                                data[data_pos] |= bytes_[0]
-                                        else:
-                                            bmp[bmp_pos] = self._get_bmp_pixel_data(data, format_, data_pos)
+                                                output[start:end] = pixel
+
+                                        else:  # from bin
+                                            # data consists of binary pixel data
+                                            data_x = (x3 + (x2 * 4) + (x * 16) + (tile_x * 64))
+                                            data_y = ((y3 * 2) + (y2 * 8) + (y * 32) + (tile_y * data_width * 8))
+
+                                            pix_pos = pixel_x + (pixel_y * width)
+                                            data_pos = data_x + data_y
+
+                                            # output constists of (r, g, b, a) elements
+                                            pixel = self._get_rgba_pixel(data, format_, data_pos)
+                                            output[pix_pos] = pixel
 
         if to_bin:
-            return struct.pack('%dB' % len(data), *data)
+            return struct.pack('%dB' % len(output), *output)
         else:
-            return bmp
+            return output
 
-    def _get_bmp_pixel_data(self, data, format_, index):
+    def _get_rgba_pixel(self, data, format_, index):
         red = green = blue = alpha = 0
 
         # rrrrrrrr gggggggg bbbbbbbb aaaaaaaa
@@ -638,10 +675,10 @@ class Bflim:
 
         return red, green, blue, alpha
 
-    def _get_pixel_data(self, bmp, format_, index):
+    def _get_binary_pixel(self, pixel, format_, index):
         # bmp data: tuple (r, g, b, a)
         # output: list of bytes: [255, 255]
-        red, green, blue, alpha = bmp[index]
+        red, green, blue, alpha = pixel
 
         if format_ == FORMAT_RGBA8:
             return [red, green, blue, alpha]
@@ -717,7 +754,7 @@ class Bflim:
 
         # aaaa
         elif format_ == FORMAT_A4:
-            alpha = (bmp[index][3] / 0x11) & 0xF
+            alpha = (alpha / 0x11) & 0xF
             shift = (index & 1) * 4
             return [alpha << shift]
 
