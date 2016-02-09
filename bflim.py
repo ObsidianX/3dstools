@@ -197,8 +197,6 @@ class Bflim:
 
     # OpenCV doesn't resize around the center when rotating (since it's just working with matrices)
     # so we need to do some lame canvas work to ensure a clean rotation + resize around the center
-    # note: I'm sure there's some better way of picking the correct rotation center to rotate the
-    #       original into the new position, I'm just too lazy to figure it out right now
     def _rotate_image(self, mat, angle, width, height):
         big = max(width, height)
         small = min(width, height)
