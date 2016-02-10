@@ -177,7 +177,7 @@ class Bflim:
                 pos = x + (y * width)
                 if self.has_cv:
                     # OpenCV keeps a BGRA format internally so swap R and B
-                    rgba = self.bmp[pos]
+                    rgba = list(self.bmp[pos])
                     r = rgba[0]
                     rgba[0] = rgba[2]
                     rgba[2] = r
