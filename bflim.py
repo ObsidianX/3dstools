@@ -120,6 +120,8 @@ ETC_MODIFIERS = [
     [47, 183]
 ]
 
+CV2_READ_ALPHA = -1
+
 
 class Bflim:
     data_size = 0
@@ -172,19 +174,25 @@ class Bflim:
         for y in range(height):
             row = []
             for x in range(width):
-                for color in self.bmp[x + (y * width)]:
-                    row.append(int(color))
+                pos = x + (y * width)
+                if self.has_cv:
+                    # OpenCV keeps a BGRA format internally so swap R and B
+                    rgba = self.bmp[pos]
+                    r = rgba[0]
+                    rgba[0] = rgba[2]
+                    rgba[2] = r
+
+                    row.append(rgba)
+                else:
+                    for color in self.bmp[x + (y * width)]:
+                        row.append(int(color))
             png_data.append(row)
 
         basename = os.path.splitext(os.path.basename(self.filename))[0]
         filename = '%s.png' % basename
-        file_ = open(filename, 'wb')
-        writer = png.Writer(width, height, alpha=True)
-        writer.write(file_, png_data)
-        file_.close()
 
         if self.has_cv:
-            img = cv2.imread(filename, -1)
+            img = numpy.array(png_data, dtype=numpy.uint8)
 
             swizzle = self.imag['swizzle']
             if swizzle == SWIZZLE_ROT_90:
@@ -194,6 +202,11 @@ class Bflim:
                 img = self._rotate_image(img, 90, width, height)
                 cv2.flip(img, 0, dst=img)
             cv2.imwrite(filename, img)
+        else:
+            file_ = open(filename, 'wb')
+            writer = png.Writer(width, height, alpha=True)
+            writer.write(file_, png_data)
+            file_.close()
 
     # OpenCV doesn't resize around the center when rotating (since it's just working with matrices)
     # so we need to do some lame canvas work to ensure a clean rotation + resize around the center
@@ -221,14 +234,45 @@ class Bflim:
         return cv2.warpAffine(mat, trans2, (height, width))
 
     def load(self, filename):
-        png_file = open(filename, 'rb')
-        reader = png.Reader(file=png_file)
-        width, height, pixels, metadata = reader.read()
-
         bmp = []
-        for row in list(pixels):
-            for pixel in range(len(row) / 4):
-                bmp.append(row[pixel * 4:pixel * 4 + 4])
+
+        if self.has_cv:
+            img = cv2.imread(filename, CV2_READ_ALPHA)
+
+            height, width, channels = img.shape
+            if self.swizzle == SWIZZLE_ROT_90:
+                img = self._rotate_image(img, -90, width, height)
+                height_ = height
+
+                height = width
+                width = height_
+
+            elif self.swizzle == SWIZZLE_TRANSPOSE:
+                cv2.flip(img, 0, dst=img)
+                img = self._rotate_image(img, -90, width, height)
+                height_ = height
+
+                height = width
+                width = height_
+
+            for y in range(height):
+                for x in range(width):
+                    # OpenCV keeps a BGRA format internally so swap R and B
+                    bgra = list(img[y][x])
+                    b = bgra[0]
+                    bgra[0] = bgra[2]
+                    bgra[2] = b
+
+                    bmp.append(bgra)
+        else:
+            png_file = open(filename, 'rb')
+            reader = png.Reader(file=png_file)
+            width, height, pixels, metadata = reader.read()
+            png_file.close()
+
+            for row in list(pixels):
+                for pixel in range(len(row) / 4):
+                    bmp.append(row[pixel * 4:pixel * 4 + 4])
 
         self.imag = {
             'width': width,
@@ -239,8 +283,6 @@ class Bflim:
         self.order = '>' if self.big_endian else '<'
 
         self.bmp = self._parse_image_data(bmp, to_bin=True, exact=False)
-
-        png_file.close()
 
     def save(self, output_filename):
         file_ = open(output_filename, 'wb')
@@ -492,7 +534,7 @@ class Bflim:
             width = 1 << int(math.ceil(math.log(width, 2)))
             height = 1 << int(math.ceil(math.log(height, 2)))
 
-            if self.debug and width != data_width or height != data_height:
+            if self.debug and (width != data_width or height != data_height):
                 print('Expanding output size: %dx%d' % (width, height))
 
         # textures are stored as power-of-two images
