@@ -294,7 +294,7 @@ class Sarc:
                     dirname = os.path.dirname(filename)
                     if len(dirname) > 0 and not os.path.exists(dirname):
                         try:
-                            os.mkdir(dirname)
+                            os.makedirs(dirname)
                         except OSError:
                             print("Couldn't create directory: %s" % dirname)
                             return
