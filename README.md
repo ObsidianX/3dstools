@@ -226,7 +226,7 @@ bflim.py -c image.png image.bflim
 
 Convert PNG to BFLIM, setting swizzle to 90 degree rotation:
 
-Note: currently the PNG needs to be pre-swizzled as the `-s` flag only sets the header value.
+Note: Swizzling is only applied if OpenCV is available.
 
 ```
 bflim.py -s 4 -c image.png image.bflim
