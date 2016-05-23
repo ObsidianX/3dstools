@@ -185,7 +185,7 @@ class Bffnt:
 
         # convert pixels to RGBA8
         position = self.tglp['sheetOffset']
-        self._parse_tglp_data(data[position:position + self.tglp['sheet']['size']])
+        self._parse_tglp_data(data)
 
     def load(self, json_filename):
         json_data = json.load(open(json_filename, 'r'))
@@ -658,6 +658,7 @@ class Bffnt:
                 'height': self.tglp['sheet']['height'],
                 'data': bmp_data
             })
+            position = position + self.tglp['sheet']['size']
 
     def _decompress_etc1(self, data):
         width = self.tglp['sheet']['width']
@@ -900,9 +901,9 @@ class Bffnt:
             b1, b2 = struct.unpack('2B', data[index * 2:index * 2 + 2])
 
             red = ((b1 >> 4) & 0x0F) * 0x11
-            green = (b1 & 0x0F) * 0x11
+            alpha = (b1 & 0x0F) * 0x11
             blue = ((b2 >> 4) & 0x0F) * 0x11
-            alpha = (b2 & 0x0F) * 0x11
+            green = (b2 & 0x0F) * 0x11
 
         # llllllll aaaaaaaa
         elif format_ == FORMAT_LA8:
