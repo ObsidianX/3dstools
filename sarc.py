@@ -163,7 +163,7 @@ class Sarc:
             self._write(struct.pack('%s2I' % self.order, file_start, file_end), False)
             self.file.seek(position)
 
-            file = open(filename, 'r')
+            file = open(filename, 'rb')
             data = file.read(FILE_READ_SIZE)
             while len(data) > 0:
                 self._write(data)
@@ -298,7 +298,7 @@ class Sarc:
                         except OSError:
                             print("Couldn't create directory: %s" % dirname)
                             return
-                    output = file(filename, 'w')
+                    output = file(filename, 'wb')
 
                 if remaining == self.file_nodes[file_idx]['length']:
                     start = self.file_nodes[file_idx]['start'] + self.file_data_offset
