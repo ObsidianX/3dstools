@@ -16,7 +16,7 @@ SARC_MAGIC = 'SARC'
 SFAT_MAGIC = 'SFAT'
 SFNT_MAGIC = 'SFNT'
 
-SARC_HEADER_STRUCT = '=4s2H3I'
+SARC_HEADER_STRUCT = '%s4s2H3I'
 SFAT_HEADER_STRUCT = '%s4s2HI'
 SFAT_NODE_STRUCT = '%s4I'
 SFNT_HEADER_STRUCT = '%s4s2H'
@@ -334,14 +334,15 @@ class Sarc:
             self._list_files()
 
     def _parse_header(self, data):
-        magic, header_len, bom, file_len, data_offset, unknown = struct.unpack(SARC_HEADER_STRUCT, data)
-
-        self.order = None
-
-        if bom == 0xFFFE:
-            self.order = '>'
-        elif bom == 0xFEFF:
-            self.order = '<'
+        bom = data[6:8]
+        
+        if bom not in ['\xff\xfe', '\xfe\xff']:
+            print('Invalid byte-order marker: 0x%x (expected either 0xFFFE or 0xFEFF)' % bom)
+            self.invalid = True
+            return
+        
+        self.order = '<' if (bom == '\xff\xfe') else '>'
+        magic, header_len, bom, file_len, data_offset, unknown = struct.unpack(SARC_HEADER_STRUCT % self.order, data)
 
         if magic != SARC_MAGIC:
             print('Invalid SARC magic bytes: %s (expected "%s")' % (magic, SARC_MAGIC))
