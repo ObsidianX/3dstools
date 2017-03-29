@@ -335,6 +335,12 @@ class Sarc:
 
     def _parse_header(self, data):
         bom = data[6:8]
+        
+        if bom not in ['\xff\xfe', '\xfe\xff']:
+            print('Invalid byte-order marker: 0x%x (expected either 0xFFFE or 0xFEFF)' % bom)
+            self.invalid = True
+            return
+        
         self.order = '<' if (bom == '\xff\xfe') else '>'
         magic, header_len, bom, file_len, data_offset, unknown = struct.unpack(SARC_HEADER_STRUCT % self.order, data)
 
