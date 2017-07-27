@@ -72,7 +72,6 @@ class Sarc:
 
     def add(self, path):
         if os.path.isdir(path):
-            #os.path.walk(path, self._add_path, None)
             for path, dirs, files in os.walk(path):
                 self._add_path(path, dirs, files)
         else:
@@ -97,7 +96,7 @@ class Sarc:
             self.file_position += len(data)
 
     def save(self):
-        bom = 0xFEFF
+        bom = 0xFEFF  #because 0xfeff if packed in big endian and 0xfffe in little endian. better to keep the byteorder with the header struct
 
         header = struct.pack(SARC_HEADER_STRUCT % self.order, SARC_MAGIC, SARC_HEADER_LEN, bom, 0, 0, SARC_HEADER_UNKNOWN)
 
