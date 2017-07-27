@@ -50,7 +50,7 @@ class Sarc:
                  list=False, compression_level=DEFAULT_COMPRESSION_LEVEL):
         self.file = open(filename, 'rb' if (extract or list) else 'wb')
         self.filename = filename
-        self.outdir = os.path.splitext(filename)[0]  #if no names
+        self.outdir = os.path.splitext(filename)[0] + '_'  #if no names
         self.compressed = compressed
         self.verbose = verbose
         self.extract = extract
