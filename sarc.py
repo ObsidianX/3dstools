@@ -12,9 +12,9 @@ SFAT_HEADER_LEN = 0x0c
 SFNT_HEADER_LEN = 0x08
 SFAT_NODE_LEN = 0x10
 
-SARC_MAGIC = 'SARC'
-SFAT_MAGIC = 'SFAT'
-SFNT_MAGIC = 'SFNT'
+SARC_MAGIC = b'SARC'
+SFAT_MAGIC = b'SFAT'
+SFNT_MAGIC = b'SFNT'
 
 SARC_HEADER_STRUCT = '%s4s2H3I'
 SFAT_HEADER_STRUCT = '%s4s2HI'
@@ -50,6 +50,7 @@ class Sarc:
                  list=False, compression_level=DEFAULT_COMPRESSION_LEVEL):
         self.file = open(filename, 'rb' if (extract or list) else 'wb')
         self.filename = filename
+        self.outdir = os.path.splitext(filename)[0] + '_'  #if no names
         self.compressed = compressed
         self.verbose = verbose
         self.extract = extract
@@ -71,26 +72,23 @@ class Sarc:
 
     def add(self, path):
         if os.path.isdir(path):
-            os.path.walk(path, self._add_path, None)
+            for path, dirs, files in os.walk(path):
+                self._add_path(path, dirs, files)
         else:
             self.files.append(path)
 
-        self.files.sort(self._file_sort)
+        self.files.sort(key=self._file_sort)
+    
+    def _file_sort(self, name):
+        if name.endswith('.noname.bin'):
+            hash_ = int(os.path.split(name)[-1].split('.')[0].lstrip('0x'), 16)
+        else:
+            hash_ = self._calc_filename_hash(name)
+        return hash_
 
-    def _file_sort(self, x, y):
-        hash_x = self._calc_filename_hash(x)
-        hash_y = self._calc_filename_hash(y)
-
-        if hash_x < hash_y:
-            return -1
-        elif hash_x > hash_y:
-            return 1
-
-        return 0
-
-    def _add_path(self, arg, dirname, files):
+    def _add_path(self, path, dirs, files):
         for file_ in files:
-            self.files.append(os.path.join(dirname, file_))
+            self.files.append(os.path.join(path, file_))
 
     def _write(self, data, count=True):
         self.file.write(data)
@@ -98,30 +96,31 @@ class Sarc:
             self.file_position += len(data)
 
     def save(self):
-        bom = 0
-        if self.order == '<':
-            bom = 0xFEFF
-        elif self.order == '>':
-            bom = 0xFFFE
+        bom = 0xFEFF  #because 0xfeff if packed in big endian and 0xfffe in little endian. better to keep the byteorder with the header struct
 
-        header = struct.pack(SARC_HEADER_STRUCT, SARC_MAGIC, SARC_HEADER_LEN, bom, 0, 0, SARC_HEADER_UNKNOWN)
+        header = struct.pack(SARC_HEADER_STRUCT % self.order, SARC_MAGIC, SARC_HEADER_LEN, bom, 0, 0, SARC_HEADER_UNKNOWN)
 
         self.file_position = 0
         self._write(header)
 
-        fat_bytes = ''
-        fnt_bytes = ''
+        fat_bytes = b''
+        fnt_bytes = b''
 
         for filename in self.files:
-            hash_ = self._calc_filename_hash(filename)
-            offset = 0x01000000 | len(fnt_bytes) / 4
+            if filename.endswith('.noname.bin'):
+                hash_ = int(os.path.split(filename)[-1].split('.')[0].lstrip('0x'), 16)
+                offset = 0x00000000
+                filename = '\x00'*16
+            else:
+                hash_ = self._calc_filename_hash(filename)
+                offset = 0x01000000 | len(fnt_bytes) / 4
 
             fat_bytes += struct.pack(SFAT_NODE_STRUCT % self.order, hash_, offset, 0, 0)
-            fnt_bytes += struct.pack('%s%dsB' % (self.order, len(filename)), filename, 0)
+            fnt_bytes += struct.pack('%s%dsB' % (self.order, len(filename)), filename.encode('ascii'), 0)
 
             padding = 4 - (len(fnt_bytes) % 4)
             if padding < 4:
-                fnt_bytes += '\0' * padding
+                fnt_bytes += b'\x00' * padding
 
         fat_header = struct.pack(SFAT_HEADER_STRUCT % self.order, SFAT_MAGIC, SFAT_HEADER_LEN, len(self.files),
                                  SFAT_HASH_MULTIPLIER)
@@ -138,7 +137,7 @@ class Sarc:
         padding = 0x100 - (data_start % 0x100)
         if padding < 0x100:
             data_start += padding
-            self._write('\x00' * padding)
+            self._write(b'\x00' * padding)
 
         self.file.seek(0x0c)
         self._write(struct.pack('%sI' % self.order, data_start), False)
@@ -150,7 +149,7 @@ class Sarc:
             position = self.file_position
             padding = 0x80 - (position % 0x80)
             if padding < 0x80:
-                self._write('\0' * padding)
+                self._write(b'\x00' * padding)
                 position += padding
 
             if self.verbose:
@@ -204,7 +203,7 @@ class Sarc:
             z = zlib.decompressobj()
         state = STATE_SARC_HEADER
 
-        partial_data = ''
+        partial_data = b''
         eof = False
         get_more = True
         node_section_length = 0
@@ -213,6 +212,10 @@ class Sarc:
         file_idx = 0
         remaining = 0
         output = None
+        try:
+            os.mkdir(self.outdir)
+        except:
+            pass
 
         while not eof or len(partial_data) > 0 or self.extracting:
             if get_more:
@@ -290,7 +293,8 @@ class Sarc:
 
                     if self.verbose:
                         print(filename)
-
+                    if not self.file_nodes[file_idx]['has_name']:
+                        filename = os.path.join(self.outdir, filename)
                     dirname = os.path.dirname(filename)
                     if len(dirname) > 0 and not os.path.exists(dirname):
                         try:
@@ -298,7 +302,7 @@ class Sarc:
                         except OSError:
                             print("Couldn't create directory: %s" % dirname)
                             return
-                    output = file(filename, 'wb')
+                    output = open(filename, 'wb')
 
                 if remaining == self.file_nodes[file_idx]['length']:
                     start = self.file_nodes[file_idx]['start'] + self.file_data_offset
@@ -317,7 +321,7 @@ class Sarc:
                 if partial_len < remaining:
                     output.write(partial_data)
                     remaining -= partial_len
-                    partial_data = ''
+                    partial_data = b''
                     partial_start = position
                     get_more = True
                 else:
@@ -335,13 +339,17 @@ class Sarc:
 
     def _parse_header(self, data):
         bom = data[6:8]
+        try:  #python3
+            int_bom = int.from_bytes(bom, 'big')  #for error messages
+        except:
+            int_bom = (ord(bom[0]) << 8) + ord(bom[1])
         
-        if bom not in ['\xff\xfe', '\xfe\xff']:
-            print('Invalid byte-order marker: 0x%x (expected either 0xFFFE or 0xFEFF)' % bom)
+        if bom not in [b'\xff\xfe', b'\xfe\xff']:
+            print('Invalid byte-order marker: 0x%x (expected either 0xFFFE or 0xFEFF)' % int_bom)
             self.invalid = True
             return
         
-        self.order = '<' if (bom == '\xff\xfe') else '>'
+        self.order = '<' if (bom == b'\xff\xfe') else '>'
         magic, header_len, bom, file_len, data_offset, unknown = struct.unpack(SARC_HEADER_STRUCT % self.order, data)
 
         if magic != SARC_MAGIC:
@@ -355,7 +363,7 @@ class Sarc:
             return
 
         if self.order is None:
-            print('Invalid byte-order marker: 0x%x (expected either 0xFFFE or 0xFEFF)' % bom)
+            print('Invalid byte-order marker: 0x%x (expected either 0xFFFE or 0xFEFF)' % int_bom)
             self.invalid = True
             return
 
@@ -409,12 +417,15 @@ class Sarc:
             idx += SFAT_NODE_LEN
 
             hash, name_offset, data_start, data_end = struct.unpack(SFAT_NODE_STRUCT % self.order, node_data)
+            # first byte is to determine if the file name is stored in SFNT
+            has_name = name_offset >> 24
             # trim off first byte
             name_offset &= 0xFFFFFF
             name_offset *= 4
 
             self.file_nodes.append({
                 'hash': hash,
+                'has_name': has_name,
                 'name_offset': name_offset,
                 'start': data_start,
                 'end': data_end,
@@ -442,22 +453,25 @@ class Sarc:
 
     def _parse_fnt_data(self, data):
         for node in self.file_nodes:
-            start = node['name_offset']
-            end = data.find('\0', start)
-            node['filename'] = data[start:end]
+            if node['has_name']:
+                start = node['name_offset']
+                end = data.find(b'\0', start)
+                node['filename'] = data[start:end]
 
-            if self.debug:
-                print('File name: %s' % node['filename'])
-                print('File name hash: 0x%x' % node['hash'])
-                print('File data start: %d' % node['start'])
-                print('File length: %d\n' % node['length'])
+                if self.debug:
+                    print('File name: %s' % node['filename'])
+                    print('File name hash: 0x%x' % node['hash'])
+                    print('File data start: %d' % node['start'])
+                    print('File length: %d\n' % node['length'])
 
-            hash = self._calc_filename_hash(node['filename'])
-            if node['hash'] != hash:
-                print('Invalid filename: %s' % node['filename'])
-                print('Hash: 0x%x (expected 0x%x)' % (hash, node['hash']))
-                self.invalid = True
-                return
+                hash = self._calc_filename_hash(node['filename'])
+                if node['hash'] != hash:
+                    print('Invalid filename: %s' % node['filename'])
+                    print('Hash: 0x%x (expected 0x%x)' % (hash, node['hash']))
+                    self.invalid = True
+                    return
+            else:
+                node['filename'] = '0x%08x.noname.bin' % node['hash']
 
     def _calc_filename_hash(self, name):
         result = 0
@@ -493,6 +507,9 @@ if __name__ == '__main__':
     parser.add_argument('-f', '--archive', metavar='archive', help='the SARC filename', default=None, required=True)
     parser.add_argument('file', help='files to add to an archive', nargs='*')
     args = parser.parse_args()
+    
+    if args.big_endian:  #issue with argparse...
+        args.little_endian = False
 
     archive_exists = os.path.exists(args.archive)
 
@@ -502,7 +519,10 @@ if __name__ == '__main__':
         while answer not in ('y', 'n'):
             if answer is not None:
                 print('Please answer "y" or "n"')
-            answer = raw_input('Overwrite existing file? (y/N) ').lower()
+            try:  #python2
+                answer = raw_input('Overwrite existing file? (y/N) ').lower()
+            except:
+                answer = input('Overwrite existing file? (y/N) ').lower()
 
             if len(answer) == 0:
                 answer = 'n'
