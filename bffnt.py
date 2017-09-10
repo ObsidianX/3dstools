@@ -13,7 +13,7 @@ import png
 # CWDH = Character Widths
 # CMAP = Character Mapping
 
-VERSION = 0x04000000
+VERSIONS = (0x04000000, 0x03000000)
 
 FFNT_HEADER_SIZE = 0x14
 FINF_HEADER_SIZE = 0x20
@@ -21,15 +21,17 @@ TGLP_HEADER_SIZE = 0x20
 CWDH_HEADER_SIZE = 0x10
 CMAP_HEADER_SIZE = 0x14
 
-FFNT_HEADER_MAGIC = 'FFNT'
-FINF_HEADER_MAGIC = 'FINF'
-TGLP_HEADER_MAGIC = 'TGLP'
-CWDH_HEADER_MAGIC = 'CWDH'
-CMAP_HEADER_MAGIC = 'CMAP'
+FFNT_HEADER_MAGIC = (b'FFNT', b'CFNT', b'CFNU')
+FINF_HEADER_MAGIC = b'FINF'
+TGLP_HEADER_MAGIC = b'TGLP'
+CWDH_HEADER_MAGIC = b'CWDH'
+CMAP_HEADER_MAGIC = b'CMAP'
 
-FFNT_HEADER_STRUCT = '=4s2H3I'
-FINF_HEADER_STRUCT = '%s4sI4B2H4B3I'
-TGLP_HEADER_STRUCT = '%s4sI4BI6HI'
+FFNT_HEADER_STRUCT = '%s4s2H3I'
+FINF_HEADER_STRUCT_4 = '%s4sI4B2H4B3I'
+FINF_HEADER_STRUCT_3 = '%s4sI2BH4B3I4B'
+TGLP_HEADER_STRUCT_4 = '%s4sI4BI6HI'
+TGLP_HEADER_STRUCT_3 = '%s4sI4BI6HI'
 CWDH_HEADER_STRUCT = '%s4sI2HI'
 CMAP_HEADER_STRUCT = '%s4sI4HI'
 
@@ -191,6 +193,8 @@ class Bffnt:
         json_data = json.load(open(json_filename, 'r'))
 
         self.order = self.load_order
+        self.version = json_data['version']
+        self.filetype = json_data['fileType']
 
         self.font_info = json_data['fontInfo']
         tex_info = json_data['textureInfo']
@@ -230,8 +234,8 @@ class Bffnt:
         }
 
         widest = 0
-        glyph_indicies = widths.keys()
-        glyph_indicies.sort(self._int_sort)
+        glyph_indicies = list(widths.keys())
+        glyph_indicies.sort(key=self._int_sort)
 
         cwdh['end'] = int(glyph_indicies[-1], 10)
 
@@ -245,7 +249,7 @@ class Bffnt:
         self.cwdh_sections = [cwdh]
 
         glyph_map = json_data['glyphMap']
-        glyph_ords = glyph_map.keys()
+        glyph_ords = list(glyph_map.keys())
         glyph_ords.sort()
         cmap = {
             'start': ord(glyph_ords[0]),
@@ -255,22 +259,21 @@ class Bffnt:
         }
 
         for entry in range(cmap['start'], cmap['end'] + 1):
-            utf16 = unichr(entry)
+            try:  #Python2
+                utf16 = unichr(entry)
+            except:  #Python3
+                utf16 = chr(entry)
             if utf16 in glyph_map:
                 cmap['entries'][utf16] = glyph_map[utf16]
 
         self.cmap_sections = [cmap]
 
-    def _int_sort(self, x, y):
-        x = int(x, 10)
-        y = int(y, 10)
-        if x < y:
-            return -1
-        if x > y:
-            return 1
-        return 0
+    def _int_sort(self, n):
+        return int(n, 10)
 
     def extract(self):
+        if self.verbose:
+            print('Extracting...')
         basename_ = os.path.splitext(os.path.basename(self.filename))[0]
 
         glyph_widths = {}
@@ -282,12 +285,18 @@ class Bffnt:
         for cmap in self.cmap_sections:
             if cmap['type'] == MAPPING_DIRECT:
                 for code in range(cmap['start'], cmap['end']):
-                    glyph_mapping[unichr(code)] = code - cmap['start'] + cmap['indexOffset']
+                    try:  #Python2
+                        glyph_mapping[unichr(code)] = code - cmap['start'] + cmap['indexOffset']
+                    except:
+                        glyph_mapping[chr(code)] = code - cmap['start'] + cmap['indexOffset']
             elif cmap['type'] == MAPPING_TABLE:
                 for code in range(cmap['start'], cmap['end']):
                     index = cmap['indexTable'][code - cmap['start']]
                     if index != 0xFFFF:
-                        glyph_mapping[unichr(code)] = index
+                        try:  #Python2
+                            glyph_mapping[unichr(code)] = index
+                        except:
+                            glyph_mapping[chr(code)] = index
             elif cmap['type'] == MAPPING_SCAN:
                 for code in cmap['entries'].keys():
                     glyph_mapping[code] = cmap['entries'][code]
@@ -295,6 +304,8 @@ class Bffnt:
         # save JSON manifest
         json_file_ = open('%s_manifest.json' % basename_, 'w')
         json_file_.write(json.dumps({
+            'version': self.version,
+            'fileType': self.filetype,
             'fontInfo': self.font_info,
             'textureInfo': {
                 'glyph': self.tglp['glyph'],
@@ -330,8 +341,11 @@ class Bffnt:
             writer = png.Writer(width, height, alpha=True)
             writer.write(file_, png_data)
             file_.close()
+        print('Done')
 
     def save(self, filename):
+        if self.verbose:
+            print('Packing...')
         file_ = open(filename, 'wb')
         basename_ = os.path.splitext(os.path.basename(filename))[0]
         section_count = 0
@@ -345,29 +359,46 @@ class Bffnt:
         # write header
         file_size_pos = 0x0C
         section_count_pos = 0x10
+        magic = self.filetype.upper().encode('ascii')
 
-        data = struct.pack(FFNT_HEADER_STRUCT, FFNT_HEADER_MAGIC, bom, FFNT_HEADER_SIZE, VERSION, 0, 0)
+        data = struct.pack(FFNT_HEADER_STRUCT % self.order, magic, bom, FFNT_HEADER_SIZE, self.version, 0, 0)
         file_.write(data)
 
         position = FFNT_HEADER_SIZE
 
         # write finf
+        if self.verbose:
+            print('Writing FINF...')
         font_info = self.font_info
         default_width = font_info['defaultWidth']
-        finf_tglp_offset_pos = position + 0x14
-        finf_cwdh_offset_pos = position + 0x18
-        finf_cmap_offset_pos = position + 0x1C
-
-        data = struct.pack(FINF_HEADER_STRUCT % self.order, FINF_HEADER_MAGIC, FINF_HEADER_SIZE, font_info['fontType'],
+        if self.version == 0x04000000:
+            finf_tglp_offset_pos = position + 0x14
+            finf_cwdh_offset_pos = position + 0x18
+            finf_cmap_offset_pos = position + 0x1C
+        elif self.version == 0x03000000:
+            finf_tglp_offset_pos = position + 0x10
+            finf_cwdh_offset_pos = position + 0x14
+            finf_cmap_offset_pos = position + 0x18
+        if self.version == 0x04000000:
+            data = struct.pack(FINF_HEADER_STRUCT_4 % self.order, FINF_HEADER_MAGIC, FINF_HEADER_SIZE, font_info['fontType'],
                            font_info['height'], font_info['width'], font_info['ascent'], font_info['lineFeed'],
                            font_info['alterCharIdx'], default_width['left'], default_width['glyphWidth'],
                            default_width['charWidth'], font_info['encoding'], 0, 0, 0)
+        elif self.version == 0x03000000:
+            data = struct.pack(FINF_HEADER_STRUCT_3 % self.order, FINF_HEADER_MAGIC, FINF_HEADER_SIZE, font_info['fontType'],
+                           font_info['lineFeed'],
+                           font_info['alterCharIdx'], default_width['left'], default_width['glyphWidth'],
+                           default_width['charWidth'], font_info['encoding'], 0, 0, 0,
+                           font_info['height'], font_info['width'], font_info['ascent'], 0)
+                           
         file_.write(data)
         position += FINF_HEADER_SIZE
 
         section_count += 1
 
         # write tglp
+        if self.verbose:
+            print('Writing TGLP...')
         tglp = self.tglp
         sheet = tglp['sheet']
         tglp_size_pos = position + 0x04
@@ -378,10 +409,16 @@ class Bffnt:
         file_.seek(position)
 
         tglp_start_pos = position
-        data = struct.pack(TGLP_HEADER_STRUCT % self.order, TGLP_HEADER_MAGIC, 0, tglp['glyph']['width'],
-                           tglp['glyph']['height'], tglp['sheetCount'], tglp['maxCharWidth'], tglp_data_size,
-                           tglp['glyph']['baseline'], sheet['format'], sheet['cols'], sheet['rows'], sheet['width'],
-                           sheet['height'], TGLP_DATA_OFFSET)
+        if self.version == 0x04000000:
+            data = struct.pack(TGLP_HEADER_STRUCT_4 % self.order, TGLP_HEADER_MAGIC, 0, tglp['glyph']['width'],
+                       tglp['glyph']['height'], tglp['sheetCount'], tglp['maxCharWidth'], tglp_data_size,
+                       tglp['glyph']['baseline'], sheet['format'], sheet['cols'], sheet['rows'], sheet['width'],
+                       sheet['height'], TGLP_DATA_OFFSET)
+        elif self.version == 0x03000000:
+            data = struct.pack(TGLP_HEADER_STRUCT_3 % self.order, TGLP_HEADER_MAGIC, 0, tglp['glyph']['width'],
+                       tglp['glyph']['height'], tglp['glyph']['baseline'], tglp['maxCharWidth'], tglp_data_size, tglp['sheetCount'], 
+                       sheet['format'], sheet['cols'], sheet['rows'], sheet['width'],
+                       sheet['height'], TGLP_DATA_OFFSET)
         file_.write(data)
 
         file_.seek(TGLP_DATA_OFFSET)
@@ -409,7 +446,7 @@ class Bffnt:
 
             bmp = []
             for row in list(pixels):
-                for pixel in range(len(row) / 4):
+                for pixel in range(len(row) // 4):
                     bmp.append(row[pixel * 4:pixel * 4 + 4])
             data = self._sheet_to_bitmap(bmp, to_tglp=True)
             file_.write(data)
@@ -425,10 +462,11 @@ class Bffnt:
         file_.seek(position)
 
         # write cwdh
+        if self.verbose:
+            print('Writing CWDH...')
         prev_cwdh_offset_pos = 0
         for cwdh in self.cwdh_sections:
             section_count += 1
-
             if prev_cwdh_offset_pos > 0:
                 file_.seek(prev_cwdh_offset_pos)
                 file_.write(struct.pack('%sI' % self.order, position + 8))
@@ -457,10 +495,11 @@ class Bffnt:
         file_.seek(position)
 
         # write cmap
+        if self.verbose:
+            print('Writing CMAP...')
         prev_cmap_offset_pos = 0
         for cmap in self.cmap_sections:
             section_count += 1
-
             if prev_cmap_offset_pos > 0:
                 file_.seek(prev_cmap_offset_pos)
                 file_.write(struct.pack('%sI' % self.order, position + 8))
@@ -486,7 +525,7 @@ class Bffnt:
                     file_.write(struct.pack('%sH' % self.order, index))
                     position += 2
             elif cmap['type'] == MAPPING_SCAN:
-                keys = cmap['entries'].keys()
+                keys = list(cmap['entries'].keys())
                 keys.sort()
                 for code in keys:
                     index = cmap['entries'][code]
@@ -503,26 +542,31 @@ class Bffnt:
 
         file_.seek(section_count_pos)
         file_.write(struct.pack('%sI' % self.order, section_count))
+        if self.verbose:
+            print('Done!')
 
     def _parse_header(self, data):
-        magic, bom, header_size, version, file_size, sections = struct.unpack(FFNT_HEADER_STRUCT, data)
-
-        if magic != FFNT_HEADER_MAGIC:
-            print('Invalid FFNT magic bytes: %s (expected %s)' % (magic, FFNT_HEADER_MAGIC))
-            self.invalid = True
-            return
-
+        bom = struct.unpack_from('>H', data, 4)[0]
         if bom == 0xFFFE:
-            self.order = '>'
-        elif bom == 0xFEFF:
             self.order = '<'
+        elif bom == 0xFEFF:
+            self.order = '>'
 
         if self.order is None:
             print('Invalid byte-order marker: 0x%x (expected 0xFFFE or 0xFEFF)' % bom)
             self.invalid = True
             return
+            
+        magic, bom, header_size, self.version, file_size, sections = struct.unpack(FFNT_HEADER_STRUCT % self.order, data)
 
-        if version != VERSION:
+        if magic not in FFNT_HEADER_MAGIC:
+            print('Invalid FFNT magic bytes: %s (expected %s)' % (magic, FFNT_HEADER_MAGIC))
+            self.invalid = True
+            return
+        self.filetype = magic.decode('ascii').lower()
+
+
+        if self.version not in VERSIONS:
             print('Unknown version: 0x%08x (expected 0x%08x)' % (version, VERSION))
             self.invalid = True
             return
@@ -543,14 +587,17 @@ class Bffnt:
             print('FFNT Magic: %s' % magic)
             print('FFNT BOM: %s (0x%x)' % (self.order, bom))
             print('FFNT Header Size: %d' % header_size)
-            print('FFNT Version: 0x%08x' % version)
+            print('FFNT Version: 0x%08x' % self.version)
             print('FFNT File Size: %d' % file_size)
             print('FFNT Sections: %d\n' % sections)
 
     def _parse_finf(self, data):
-        magic, section_size, font_type, height, width, ascent, line_feed, alter_char_idx, def_left, def_glyph_width, \
-            def_char_width, encoding, tglp_offset, cwdh_offset, cmap_offset \
-            = struct.unpack(FINF_HEADER_STRUCT % self.order, data)
+        if self.version == 0x04000000:
+            magic, section_size, font_type, height, width, ascent, line_feed, alter_char_idx, def_left, def_glyph_width, \
+                def_char_width, encoding, tglp_offset, cwdh_offset, cmap_offset \
+                = struct.unpack(FINF_HEADER_STRUCT_4 % self.order, data)
+        elif self.version == 0x03000000:
+            magic, section_size, font_type, line_feed, alter_char_idx, def_left, def_glyph_width, def_char_width, encoding, tglp_offset, cwdh_offset, cmap_offset, height, width, ascent, reserved = struct.unpack(FINF_HEADER_STRUCT_3 % self.order, data)
 
         if magic != FINF_HEADER_MAGIC:
             print('Invalid FINF magic bytes: %s (expected %s)' % (magic, FINF_HEADER_MAGIC))
@@ -599,9 +646,12 @@ class Bffnt:
             print('FINF CMAP Offset: 0x%08x\n' % cmap_offset)
 
     def _parse_tglp_header(self, data):
-        magic, section_size, cell_width, cell_height, num_sheets, max_char_width, sheet_size, baseline_position, \
-            sheet_pixel_format, num_sheet_cols, num_sheet_rows, sheet_width, sheet_height, sheet_data_offset \
-            = struct.unpack(TGLP_HEADER_STRUCT % self.order, data)
+        if self.version == 0x04000000:
+            magic, section_size, cell_width, cell_height, num_sheets, max_char_width, sheet_size, baseline_position, \
+                sheet_pixel_format, num_sheet_cols, num_sheet_rows, sheet_width, sheet_height, sheet_data_offset \
+                = struct.unpack(TGLP_HEADER_STRUCT_4 % self.order, data)
+        elif self.version == 0x03000000:
+            magic, section_size, cell_width, cell_height, baseline_position, max_char_width, sheet_size, num_sheets, sheet_pixel_format, num_sheet_cols, num_sheet_rows, sheet_width, sheet_height, sheet_data_offset = struct.unpack(TGLP_HEADER_STRUCT_3 % self.order, data)
 
         if magic != TGLP_HEADER_MAGIC:
             print('Invalid TGLP magic bytes: %s (expected %s)' % (magic, TGLP_HEADER_MAGIC))
@@ -814,8 +864,8 @@ class Bffnt:
             # initialize empty bitmap memory (RGBA8)
             bmp = [[0, 0, 0, 0]] * (width * height)
 
-        tile_width = width / 8
-        tile_height = height / 8
+        tile_width = width // 8
+        tile_height = height // 8
 
         # sheet is composed of 8x8 pixel tiles
         for tile_y in range(tile_height):
@@ -933,14 +983,17 @@ class Bffnt:
 
         # llll
         elif format_ == FORMAT_L4:
-            l = struct.unpack('B', data[index / 2])[0]
+            l = struct.unpack('B', data[index // 2])[0]
             shift = (index & 1) * 4
             red = green = blue = ((l >> shift) & 0x0F) * 0x11
             alpha = 255
 
         # aaaa
         elif format_ == FORMAT_A4:
-            byte = ord(data[index / 2])
+            try:  #Python2:
+                byte = ord(data[index // 2])
+            except:
+                byte = data[index // 2]
             shift = (index & 1) * 4
             alpha = ((byte >> shift) & 0x0F) * 0x11
             green = red = blue = 0xFF
@@ -960,9 +1013,9 @@ class Bffnt:
 
         # rrrrrggg ggbbbbba
         elif format_ == FORMAT_RGBA5551:
-            r5 = (red / 8) & 0x1F
-            g5 = (green / 8) & 0x1F
-            b5 = (blue / 8) & 0x1F
+            r5 = (red // 8) & 0x1F
+            g5 = (green // 8) & 0x1F
+            b5 = (blue // 8) & 0x1F
             a = 1 if alpha > 0 else 0
 
             b1 = (r5 << 3) | (g5 >> 2)
@@ -971,9 +1024,9 @@ class Bffnt:
 
         # rrrrrggg gggbbbbb
         elif format_ == FORMAT_RGB565:
-            r5 = (red / 8) & 0x1F
-            g6 = (green / 4) & 0x3F
-            b5 = (blue / 8) & 0x1F
+            r5 = (red // 8) & 0x1F
+            g6 = (green // 4) & 0x3F
+            b5 = (blue // 8) & 0x1F
 
             b1 = (r5 << 3) | (g6 >> 3)
             b2 = ((g6 << 5) | b5) & 0xFF
@@ -981,10 +1034,10 @@ class Bffnt:
 
         # rrrrgggg bbbbaaaa
         elif format_ == FORMAT_RGBA4:
-            r4 = (red / 0x11) & 0x0F
-            g4 = (green / 0x11) & 0x0F
-            b4 = (blue / 0x11) & 0x0F
-            a4 = (alpha / 0x11) & 0x0F
+            r4 = (red // 0x11) & 0x0F
+            g4 = (green // 0x11) & 0x0F
+            b4 = (blue // 0x11) & 0x0F
+            a4 = (alpha // 0x11) & 0x0F
 
             b1 = (r4 << 4) | g4
             b2 = (b4 << 4) | a4
@@ -1012,8 +1065,8 @@ class Bffnt:
 
         # llllaaaa
         elif format_ == FORMAT_LA4:
-            l = int((red * 0.2126) + (green * 0.7152) + (blue * 0.0722)) / 0x11
-            a = (alpha / 0x11) & 0x0F
+            l = int((red * 0.2126) + (green * 0.7152) + (blue * 0.0722)) // 0x11
+            a = (alpha // 0x11) & 0x0F
 
             b = (l << 4) | a
             return [b]
@@ -1026,7 +1079,7 @@ class Bffnt:
 
         # aaaa
         elif format_ == FORMAT_A4:
-            alpha = (bmp[index][3] / 0x11) & 0xF
+            alpha = (bmp[index][3] // 0x11) & 0xF
             shift = (index & 1) * 4
             return [alpha << shift]
 
@@ -1095,6 +1148,8 @@ class Bffnt:
         return next_cmap_offset
 
     def _parse_cmap_data(self, info, data):
+        if self.verbose:
+            print('\nParsing CMAP...')
         type_ = info['type']
         if type_ == MAPPING_DIRECT:
             info['indexOffset'] = struct.unpack('%sH' % self.order, data[:2])[0]
@@ -1117,7 +1172,10 @@ class Bffnt:
             for i in range(count):
                 code, offset = struct.unpack('%s2H' % self.order, data[position:position + 4])
                 position += 4
-                output[unichr(code)] = offset
+                try:  #Python2
+                    output[unichr(code)] = offset
+                except:  #Python3
+                    output[chr(code)] = offset
             info['entries'] = output
 
 
@@ -1126,8 +1184,10 @@ def prompt_yes_no(prompt):
     while answer_ not in ('y', 'n'):
         if answer_ is not None:
             print('Please answer "y" or "n"')
-
-        answer_ = raw_input(prompt).lower()
+        try:  #Python2
+            answer_ = raw_input(prompt).lower()
+        except NameError:  #Python3
+            answer_ = input(prompt).lower()
 
         if len(answer_) == 0:
             answer_ = 'n'
@@ -1191,7 +1251,7 @@ if __name__ == '__main__':
         order = '>'
     else:
         order = '<'
-    bffnt = Bffnt(load_order=order)
+    bffnt = Bffnt(load_order=order, verbose=args.verbose, debug=args.debug)
 
     if args.extract:
         bffnt.read(args.file)
