@@ -553,7 +553,6 @@ class Bffnt:
 
         if header_size != FFNT_HEADER_SIZE:
             print('Invalid header size: %d (expected %d)' % (header_size, FFNT_HEADER_SIZE))
-            blinh
             self.invalid = True
             return
 
