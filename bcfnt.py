@@ -13,7 +13,7 @@ import png
 # CWDH = Character Widths
 # CMAP = Character Mapping
 
-VERSIONS = (0x04000000, 0x03000000)
+VERSIONS = (0x03000000,)
 
 FFNT_HEADER_SIZE = 0x14
 FINF_HEADER_SIZE = 0x20
@@ -21,14 +21,14 @@ TGLP_HEADER_SIZE = 0x20
 CWDH_HEADER_SIZE = 0x10
 CMAP_HEADER_SIZE = 0x14
 
-FFNT_HEADER_MAGIC = (b'FFNT', b'FFNU')
+FFNT_HEADER_MAGIC = (b'CFNT', b'CFNU')
 FINF_HEADER_MAGIC = b'FINF'
 TGLP_HEADER_MAGIC = b'TGLP'
 CWDH_HEADER_MAGIC = b'CWDH'
 CMAP_HEADER_MAGIC = b'CMAP'
 
 FFNT_HEADER_STRUCT = '%s4s2H3I'
-FINF_HEADER_STRUCT = '%s4sI4B2H4B3I'
+FINF_HEADER_STRUCT = '%s4sI2BH4B3I4B'
 TGLP_HEADER_STRUCT = '%s4sI4BI6HI'
 CWDH_HEADER_STRUCT = '%s4sI2HI'
 CMAP_HEADER_STRUCT = '%s4sI4HI'
@@ -45,7 +45,6 @@ FORMAT_A8 = 0x08
 FORMAT_LA4 = 0x09
 FORMAT_L4 = 0x0A
 FORMAT_A4 = 0x0B
-#TODO: Fix this, in fact, it should be BC4
 FORMAT_ETC1 = 0x0C
 FORMAT_ETC1A4 = 0x0D
 
@@ -369,13 +368,16 @@ class Bffnt:
             print('Writing FINF...')
         font_info = self.font_info
         default_width = font_info['defaultWidth']
-        finf_tglp_offset_pos = position + 0x14
-        finf_cwdh_offset_pos = position + 0x18
-        finf_cmap_offset_pos = position + 0x1C
+        finf_tglp_offset_pos = position + 0x10
+        finf_cwdh_offset_pos = position + 0x14
+        finf_cmap_offset_pos = position + 0x18
+        
         data = struct.pack(FINF_HEADER_STRUCT % self.order, FINF_HEADER_MAGIC, FINF_HEADER_SIZE, font_info['fontType'],
-                           font_info['height'], font_info['width'], font_info['ascent'], font_info['lineFeed'],
+                           font_info['lineFeed'],
                            font_info['alterCharIdx'], default_width['left'], default_width['glyphWidth'],
-                           default_width['charWidth'], font_info['encoding'], 0, 0, 0)
+                           default_width['charWidth'], font_info['encoding'], 0, 0, 0,
+                           font_info['height'], font_info['width'], font_info['ascent'], 0)
+                           
         file_.write(data)
         position += FINF_HEADER_SIZE
 
@@ -395,8 +397,8 @@ class Bffnt:
 
         tglp_start_pos = position
         data = struct.pack(TGLP_HEADER_STRUCT % self.order, TGLP_HEADER_MAGIC, 0, tglp['glyph']['width'],
-                       tglp['glyph']['height'], tglp['sheetCount'], tglp['maxCharWidth'], tglp_data_size,
-                       tglp['glyph']['baseline'], sheet['format'], sheet['cols'], sheet['rows'], sheet['width'],
+                       tglp['glyph']['height'], tglp['glyph']['baseline'], tglp['maxCharWidth'], tglp_data_size, tglp['sheetCount'], 
+                       sheet['format'], sheet['cols'], sheet['rows'], sheet['width'],
                        sheet['height'], TGLP_DATA_OFFSET)
         file_.write(data)
 
@@ -571,10 +573,8 @@ class Bffnt:
             print('FFNT Sections: %d\n' % sections)
 
     def _parse_finf(self, data):
-        magic, section_size, font_type, height, width, ascent, line_feed, alter_char_idx, def_left, def_glyph_width, \
-                def_char_width, encoding, tglp_offset, cwdh_offset, cmap_offset \
-                = struct.unpack(FINF_HEADER_STRUCT % self.order, data)
-        
+        magic, section_size, font_type, line_feed, alter_char_idx, def_left, def_glyph_width, def_char_width, encoding, tglp_offset, cwdh_offset, cmap_offset, height, width, ascent, reserved = struct.unpack(FINF_HEADER_STRUCT % self.order, data)
+
         if magic != FINF_HEADER_MAGIC:
             print('Invalid FINF magic bytes: %s (expected %s)' % (magic, FINF_HEADER_MAGIC))
             self.invalid = True
@@ -622,9 +622,7 @@ class Bffnt:
             print('FINF CMAP Offset: 0x%08x\n' % cmap_offset)
 
     def _parse_tglp_header(self, data):
-        magic, section_size, cell_width, cell_height, num_sheets, max_char_width, sheet_size, baseline_position, \
-                sheet_pixel_format, num_sheet_cols, num_sheet_rows, sheet_width, sheet_height, sheet_data_offset \
-                = struct.unpack(TGLP_HEADER_STRUCT % self.order, data)
+        magic, section_size, cell_width, cell_height, baseline_position, max_char_width, sheet_size, num_sheets, sheet_pixel_format, num_sheet_cols, num_sheet_rows, sheet_width, sheet_height, sheet_data_offset = struct.unpack(TGLP_HEADER_STRUCT % self.order, data)
 
         if magic != TGLP_HEADER_MAGIC:
             print('Invalid TGLP magic bytes: %s (expected %s)' % (magic, TGLP_HEADER_MAGIC))
