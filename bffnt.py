@@ -186,7 +186,6 @@ class Bffnt:
             self._parse_cmap_data(info, data[position:position + info['size'] - CMAP_HEADER_SIZE])
 
         # convert pixels to RGBA8
-        position = self.tglp['sheetOffset']
         self._parse_tglp_data(data)
 
     def load(self, json_filename):
@@ -694,7 +693,7 @@ class Bffnt:
             print('TGLP Sheet Data Offset: 0x%08x\n' % sheet_data_offset)
 
     def _parse_tglp_data(self, data):
-        position = 0
+        position = self.tglp['sheetOffset']
         self.tglp['sheets'] = []
         format_ = self.tglp['sheet']['format']
         for i in range(self.tglp['sheetCount']):
@@ -906,7 +905,7 @@ class Bffnt:
                                                 data[data_pos:data_pos + len(bytes_)] = bytes_
                                             else:
                                                 if PIXEL_FORMAT_SIZE[format_] == 4:
-                                                    data_pos /= 2
+                                                    data_pos //= 2
                                                 data[data_pos] |= bytes_[0]
                                         else:
                                             bmp[bmp_pos] = self._get_pixel_data(data, format_, data_pos)
