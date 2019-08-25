@@ -335,7 +335,7 @@ class Bffnt:
                 png_data.append(row)
 
             file_ = open('%s_sheet%d.png' % (basename_, i), 'wb')
-            writer = png.Writer(width, height, alpha=True)
+            writer = png.Writer(width, height, greyscale=False, alpha=True)
             writer.write(file_, png_data)
             file_.close()
         print('Done')
