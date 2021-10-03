@@ -1,4 +1,5 @@
 #!/usr/bin/python
+# -*- coding: utf-8 -*-
 import argparse
 import json
 import math
@@ -188,7 +189,7 @@ class Bffnt:
         self._parse_tglp_data(data)
 
     def load(self, json_filename):
-        json_data = json.load(open(json_filename, 'r'))
+        json_data = json.load(open(json_filename, 'r', encoding="utf-8"))
 
         self.order = self.load_order
         self.version = json_data['version']
@@ -269,7 +270,7 @@ class Bffnt:
     def _int_sort(self, n):
         return int(n, 10)
 
-    def extract(self):
+    def extract(self, ensure_ascii=True):
         if self.verbose:
             print('Extracting...')
         basename_ = os.path.splitext(os.path.basename(self.filename))[0]
@@ -300,7 +301,7 @@ class Bffnt:
                     glyph_mapping[code] = cmap['entries'][code]
 
         # save JSON manifest
-        json_file_ = open('%s_manifest.json' % basename_, 'w')
+        json_file_ = open('%s_manifest.json' % basename_, 'w', encoding="utf-8")
         json_file_.write(json.dumps({
             'version': self.version,
             'fileType': self.filetype,
@@ -318,7 +319,7 @@ class Bffnt:
             },
             'glyphWidths': glyph_widths,
             'glyphMap': glyph_mapping
-        }, indent=2, sort_keys=True))
+        }, indent=2, sort_keys=True, ensure_ascii=ensure_ascii))
         json_file_.close()
 
         # save sheet bitmaps
@@ -1174,6 +1175,8 @@ if __name__ == '__main__':
     parser.add_argument('-d', '--debug', help='print debug information', action='store_true', default=False)
     parser.add_argument('-y', '--yes', help='answer yes to any questions (overwriting files)', action='store_true',
                         default=False)
+    parser.add_argument('-a', '--ensure-ascii', help='turn off ensure_ascii option when dump json file', action='store_false',
+                        default=True)
     group = parser.add_mutually_exclusive_group()
     group.add_argument('-l', '--little-endian', help='Use little endian encoding in the created BFFNT file (default)',
                        action='store_true', default=False)
@@ -1185,7 +1188,6 @@ if __name__ == '__main__':
     group.add_argument('-x', '--extract', help='extract BFFNT into PNG/JSON files', action='store_true', default=False)
     parser.add_argument('-f', '--file', metavar='bffnt', help='BFFNT file', required=True)
     args = parser.parse_args()
-
     if args.extract and not os.path.exists(args.file):
         print('Could not find BFFNT file:')
         print(args.file)
@@ -1229,7 +1231,7 @@ if __name__ == '__main__':
     if args.extract:
         bffnt.read(args.file)
         if not bffnt.invalid:
-            bffnt.extract()
+            bffnt.extract(args.ensure_ascii)
     elif args.create:
         bffnt.load(json_file)
         if not bffnt.invalid:

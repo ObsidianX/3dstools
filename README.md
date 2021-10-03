@@ -146,6 +146,7 @@ optional arguments:
   -v, --verbose         print more data when working
   -d, --debug           print debug information
   -y, --yes             answer yes to any questions (overwriting files)
+  -a, --ensure-ascii    turn off ensure_ascii option when dump json file
   -l, --little-endian   Use little endian encoding in the created BFFNT file
                         (default)
   -b, --big-endian      Use big endian encoding in the created BFFNT file
