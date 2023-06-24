@@ -283,13 +283,13 @@ class Bffnt:
         glyph_mapping = {}
         for cmap in self.cmap_sections:
             if cmap['type'] == MAPPING_DIRECT:
-                for code in range(cmap['start'], cmap['end']):
+                for code in range(cmap['start'], cmap['end'] + 1):
                     try:  #Python2
                         glyph_mapping[unichr(code)] = code - cmap['start'] + cmap['indexOffset']
                     except:
                         glyph_mapping[chr(code)] = code - cmap['start'] + cmap['indexOffset']
             elif cmap['type'] == MAPPING_TABLE:
-                for code in range(cmap['start'], cmap['end']):
+                for code in range(cmap['start'], cmap['end'] + 1):
                     index = cmap['indexTable'][code - cmap['start']]
                     if index != 0xFFFF:
                         try:  #Python2
