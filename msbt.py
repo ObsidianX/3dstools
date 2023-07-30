@@ -1,5 +1,6 @@
 #!/usr/bin/python
 import argparse
+import codecs
 import json
 import os.path
 import re
@@ -186,7 +187,9 @@ class Msbt:
 
         output['structure']['LBL1']['lists'] = self.sections['LBL1']['data']
 
-        json.dump(output, open(filename, 'w'), indent=2, sort_keys=True, ensure_ascii=False)
+        json_str = json.dumps(output, indent=2, sort_keys=True, ensure_ascii=False)
+        with codecs.open(filename, 'w', encoding='utf-8') as file:
+            file.write(json_str)
 
     def from_json(self, filename):
         json_data = json.load(open(filename, 'r'))
